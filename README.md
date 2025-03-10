@@ -10,4 +10,4 @@ Unicode 16.0 is not yet finalized, but octant characters have already been added
 
 ## TODO
 
-* I think this should work if I got the mapping right. There is probably an obvious way to map groups of 2x4 pixels to the matching octant with simple math that is currently eluding me.
+* I think this should work if I got the mapping right. There is probably an obvious way to map groups of 2x4 pixels to the matching octant with simple math that is currently eluding me!
