@@ -11,3 +11,12 @@ Unicode 16.0 is not yet finalized, but octant characters have already been added
 ## TODO
 
 * I think this should work if I got the mapping right. There is probably an obvious way to map groups of 2x4 pixels to the matching octant with simple math that is currently eluding me.
+
+## Helpful links
+
+[Code added to Chafa to support octants](https://github.com/hpjansson/chafa/commit/c23d8bc8d49919a4c78a564298d74b3e62f3b3e6#diff-fb8abb986270b233917f3e751e0892924f3c8b0f6b04c6bf60b66bebfe755be6R364)
+[Octant bits to unicode conversion function](https://gitlab.com/-/snippets/3710003)
+
+[An ANSI art generator which tries to use the best matching symbols from an arbitrary font!](https://mrogalski.eu/ansi-art/)
+
+[source for above ANSI art generator](https://github.com/mafik/ansi-art)
