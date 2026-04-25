@@ -149,6 +149,16 @@ func keyReader(r io.Reader) <-chan byte {
 }
 
 func main() {
+	// Validate arguments before touching the terminal: gore.Run does not
+	// return an error, so any WAD problem produces garbled output inside the
+	// raw/cleared terminal with no way to exit cleanly.
+	args := os.Args[1:]
+	if err := checkWAD(args); err != nil {
+		fmt.Fprintf(os.Stderr, "octantgore: %v\n", err)
+		fmt.Fprintln(os.Stderr, "usage: octantgore -iwad <doom.wad>")
+		os.Exit(1)
+	}
+
 	// Switch stdin to raw mode so individual keystrokes arrive immediately
 	// without line-buffering or echo.
 	fd := int(os.Stdin.Fd())
@@ -168,5 +178,22 @@ func main() {
 		keys:            keyReader(os.Stdin),
 		outstandingDown: make(map[uint8]time.Time),
 	}
-	gore.Run(f, os.Args[1:])
+	gore.Run(f, args)
+}
+
+// checkWAD verifies that a -iwad argument is present and the file exists.
+func checkWAD(args []string) error {
+	for i, arg := range args {
+		if arg == "-iwad" {
+			if i+1 >= len(args) {
+				return fmt.Errorf("-iwad requires a path argument")
+			}
+			path := args[i+1]
+			if _, err := os.Stat(path); err != nil {
+				return fmt.Errorf("WAD file not found: %s", path)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("no WAD file specified (use -iwad <path>)")
 }

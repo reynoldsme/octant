@@ -1,46 +1,43 @@
 # octant
 
-A Go library and CLI tool for rendering images in the terminal using Unicode 16.0
+A Go CLI tool and library for rendering images and GIF animations in the terminal using Unicode 16.0
 [octant block characters](https://www.unicode.org/charts/PDF/Unicode-16.0/U160-1CC00.pdf)
 with ANSI 24-bit truecolor.
 
-Each terminal cell is treated as a **2-column × 4-row pixel grid**. The 256
+Each terminal cell is treated as a **2-column x 4-row pixel grid**. The 256
 possible fill patterns map to Unicode block characters — the 230 octant characters
-in U+1CD00–U+1CDE5 plus legacy block-drawing characters (▄ ▀ ▌ ▐ …) for the
+in `U+1CD00`–`U+1CDE5` plus legacy block-drawing characters for the
 patterns they already cover. This gives twice the horizontal and four times the
 vertical resolution of plain half-block rendering, at the cost of each cell being
 limited to two colors.
+
+![image](images/example-tsunami.jpg)
+
+![image](images/example-octantgore.jpg)
+
 
 ---
 
 ## Font requirement
 
-Your terminal must use a font that includes the Unicode 16.0 octant characters.
-[Cascadia Code](https://github.com/microsoft/cascadia-code/releases) (the Nerd Font
-build) is the recommended choice.  Install the `.ttf` from the latest GitHub release
-and set it as your terminal font.
+Your terminal must use a font that includes the Unicode 16.0 octant characters. These are new enough (circa ~2024) your system may not ship with them. 
+[Cascadia Code](https://github.com/microsoft/cascadia-code/releases) includes these. You may use a tool like [getnf](https://github.com/getnf/getnf) to download and install the font, or or install the `.ttf` from the latest GitHub release. Some terminals seem to automatically fall back on other installed fonts for missing glyphs, but when in doubt, select that font directly.
 
 ---
 
 ## CLI
 
-### Install
+### Build and Install
 
-```
-go install octant/cmd/octant@latest
-```
-
-Or build from source:
-
-```
-git clone <this repo>
+```shell
+git clone git@github.com:reynoldsme/octant.git
 cd octant
 go build -o octant ./cmd/octant/
 ```
 
 ### Usage
 
-```
+```shell
 octant [--mono] [--cols N] [--png out.png] <image.jpg|image.png|image.gif>
 ```
 
@@ -74,7 +71,7 @@ octant.Render(img, os.Stdout)
 
 Use `octant.RenderMono` for monochrome output.
 
-### Rendering to a PNG (for testing / offline use)
+### Rendering to a PNG (for testing)
 
 ```go
 err := octant.RenderToPNG(img, "out.png", false)
@@ -101,7 +98,7 @@ see `octantgore` below for a complete example.
 ### API reference
 
 ```go
-// Render renders img as octant blocks with 24-bit ANSI colour to w.
+// Render renders img as octant blocks with 24-bit ANSI color to w.
 func Render(img image.Image, w io.Writer)
 
 // RenderMono renders img as monochrome (1-bit dithered) octant blocks to w.
@@ -134,18 +131,12 @@ func (t *Terminal) DrawFrame(img *image.RGBA)
 ## octantgore — DOOM in the terminal
 
 `octantgore` runs DOOM in the terminal using octant block rendering. It requires a
-DOOM WAD file (e.g. `doom.wad` from a retail or freedoom release).
+DOOM WAD file (e.g. `doom.wad` from a retail or [freedoom release](https://github.com/freedoom/freedoom/releases)).
 
-### Install / build
+### Build
 
-```
-go install octant/cmd/octantgore@latest
-```
-
-Or build from source:
-
-```
-git clone <this repo>
+```shell
+git clone git@github.com:reynoldsme/octant.git
 cd octant
 go build -o octantgore ./cmd/octantgore/
 ```
@@ -188,3 +179,8 @@ Keyboard controls:
 
 5. **Lookup** — the 8-bit block classification index maps directly into a prebuilt
    table of Unicode octant characters, constructed once at `init` time.
+
+---
+
+DOOM is a registered trademark of id Software LLC, a ZeniMax Media company.
+This project is not affiliated with or endorsed by id Software or ZeniMax Media.
