@@ -5,13 +5,12 @@ import (
 	"image"
 	"image/color"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/ericpauley/go-quantize/quantize"
 	"golang.org/x/term"
 )
 
@@ -43,49 +42,23 @@ func init() {
 		}
 	}
 
-	// rawOctants is the 232-entry sequence of Unicode 16.0 octant characters.
-	// It was built with rows in the wrong order (row 0 in high bits), so each
-	// index is permuted to the correct bit layout before being stored.
-	rawOctants := []rune{
-		' ', '𜴀', '𜴃', '𜴉', '𜴘', '𜴄', '𜴊', '𜴙', '𜴶', '𜵱',
-		'𜴁', '𜴋', '𜴚', '𜴷', '𜵲', '𜴆', '𜴜', '𜴹', '𜵴', '𜴐',
-		'𜴽', '𜵸', '𜴧', '𜶀', '𜵑', '𜴂', '𜴅', '𜴌', '𜴛', '𜴸',
-		'𜵳', '𜴇', '𜴍', '𜴝', '𜴺', '𜵵', '𜴑', '𜴠', '𜴾', '𜵹',
-		'𜴨', '𜵅', '𜶁', '𜵒', '𜶐', '𜶬', '𜴈', '𜴎', '𜴞', '𜴻',
-		'𜵶', '𜴒', '𜴡', '𜴿', '𜵺', '𜴩', '𜵆', '𜶂', '𜵓', '𜶑',
-		'𜶭', '𜴔', '𜴣', '𜵁', '𜵼', '𜴫', '𜵈', '𜶄', '𜵕', '𜶓',
-		'𜶯', '𜴯', '𜵋', '𜶈', '𜵙', '𜶖', '𜶳', '𜵡', '𜶜', '𜶻',
-		'𜷋', '𜴏', '𜴟', '𜴼', '𜵷', '𜴓', '𜴢', '𜵀', '𜵻', '𜴪',
-		'𜵇', '𜶃', '𜵔', '𜶒', '𜶮', '𜴕', '𜴤', '𜵂', '𜵽', '𜴬',
-		'𜶅', '𜵖', '𜶰', '𜴰', '𜵌', '𜶉', '𜵚', '𜶗', '𜶴', '𜵢',
-		'𜶝', '𜶼', '𜷌', '𜴖', '𜴥', '𜵃', '𜵾', '𜴭', '𜵉', '𜶆',
-		'𜵗', '𜶔', '𜶱', '𜴱', '𜶊', '𜵛', '𜶵', '𜵣', '𜶞', '𜶽',
-		'𜷍', '𜴳', '𜵎', '𜶌', '𜵝', '𜶙', '𜶷', '𜵥', '𜶠', '𜶿',
-		'𜷏', '𜵩', '𜶤', '𜷃', '𜷓', '𜴗', '𜴦', '𜵄', '𜵿', '𜴮',
-		'𜵊', '𜶇', '𜵘', '𜶕', '𜶲', '𜴲', '𜵍', '𜶋', '𜵜', '𜶘',
-		'𜶶', '𜵤', '𜶟', '𜶾', '𜷎', '𜴴', '𜵏', '𜶍', '𜵞', '𜶚',
-		'𜶸', '𜵦', '𜶡', '𜷀', '𜷐', '𜵪', '𜶥', '𜷄', '𜷔', '𜷛',
-		'𜴵', '𜵐', '𜶎', '𜵟', '𜶛', '𜶹', '𜵧', '𜶢', '𜷁', '𜷑',
-		'𜵫', '𜶦', '𜷅', '𜷕', '𜷜', '𜵭', '𜶨', '𜷇', '𜷗', '𜷞',
-		'𜷡', '𜶏', '𜵠', '𜶺', '𜵨', '𜶣', '𜷂', '𜷒', '𜵬', '𜶧',
-		'𜷆', '𜷖', '𜷝', '𜵮', '𜶩', '𜷈', '𜷘', '𜷢', '𜵯', '𜶪',
-		'𜷉', '𜷙', '𜷟', '𜵰', '𜶫', '𜷊', '𜷚', '𜷠', '𜷣', '𜷤',
-		'𜷥', ' ',
+	// Assign U+1CD00..U+1CDE5 to octant patterns not covered by standard
+	// block-drawing characters. Unicode 16.0 enumerates these characters in
+	// ascending order of their 8-bit pattern (bit 0 = row0/col0, bit 7 =
+	// row3/col1), skipping patterns already represented by legacy block chars.
+	specialCase := [256]bool{}
+	for _, p := range []int{
+		0x00, 0x01, 0x02, 0x03, 0x05, 0x0A, 0x0F, 0x14, 0x28, 0x3F,
+		0x40, 0x50, 0x55, 0x5A, 0x5F, 0x80, 0xA0, 0xA5, 0xAA, 0xAF,
+		0xC0, 0xF0, 0xF5, 0xFA, 0xFC, 0xFF,
+	} {
+		specialCase[p] = true
 	}
-
-	permute := func(w int) int {
-		mapping := [8]uint{6, 7, 4, 5, 2, 3, 0, 1}
-		c := 0
-		for b := range uint(8) {
-			if w&(1<<b) != 0 {
-				c |= 1 << mapping[b]
-			}
-		}
-		return c
-	}
-	for i, r := range rawOctants {
-		if r != ' ' && r != 0 {
-			octantLookup[permute(i)] = r
+	cp := rune(0x1CD00)
+	for i := range 256 {
+		if !specialCase[i] {
+			octantLookup[i] = cp
+			cp++
 		}
 	}
 
@@ -179,6 +152,41 @@ func perceptualDist(a, b linRGB) float64 {
 	return 0.2126*dr*dr + 0.7152*dg*dg + 0.0722*db*db
 }
 
+// quantize2 partitions pixels into at most 2 clusters using a single k-means
+// pass seeded from the pair of pixels with maximum perceptual distance.
+// Returns a 1-entry palette when all pixels are the same color.
+func quantize2(pixels []linRGB) []linRGB {
+	// Find the pair of pixels with the largest perceptual distance.
+	bestDist := -1.0
+	s0, s1 := 0, 1
+	for i := range pixels {
+		for j := i + 1; j < len(pixels); j++ {
+			if d := perceptualDist(pixels[i], pixels[j]); d > bestDist {
+				bestDist, s0, s1 = d, i, j
+			}
+		}
+	}
+	if bestDist == 0 {
+		return []linRGB{pixels[0]} // All pixels identical.
+	}
+	seed0, seed1 := pixels[s0], pixels[s1]
+
+	// Assign each pixel to its nearest seed; accumulate per-cluster sums.
+	var sum0, sum1 linRGB
+	var n0, n1 float64
+	for _, p := range pixels {
+		if perceptualDist(p, seed0) <= perceptualDist(p, seed1) {
+			sum0 = sum0.add(p)
+			n0++
+		} else {
+			sum1 = sum1.add(p)
+			n1++
+		}
+	}
+	// Both clusters always have ≥1 pixel (the seeds are different).
+	return []linRGB{sum0.scale(1 / n0), sum1.scale(1 / n1)}
+}
+
 // nearestLinRGB returns the index of the closest entry in palette to p.
 func nearestLinRGB(p linRGB, palette []linRGB) int {
 	best, bestDist := 0, math.MaxFloat64
@@ -194,6 +202,7 @@ func main() {
 	monochrome := false
 	maxCols := 0 // 0 = use terminal width
 	var filename string
+	var pngOut string
 
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -201,6 +210,13 @@ func main() {
 		switch {
 		case arg == "--mono" || arg == "-m":
 			monochrome = true
+		case arg == "--png":
+			i++
+			if i >= len(args) {
+				fmt.Fprintf(os.Stderr, "%s: --png requires an argument\n", os.Args[0])
+				os.Exit(1)
+			}
+			pngOut = args[i]
 		case arg == "--cols" || arg == "-c":
 			i++
 			if i >= len(args) {
@@ -226,7 +242,7 @@ func main() {
 	}
 
 	if filename == "" {
-		fmt.Fprintf(os.Stderr, "usage: %s [--mono] [--cols N] <image.jpg|image.png>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [--mono] [--cols N] [--png out.png] <image.jpg|image.png>\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -250,6 +266,11 @@ func main() {
 	}
 
 	img = scaleImage(img, maxCols)
+
+	if pngOut != "" {
+		renderToPNG(img, pngOut, monochrome)
+		return
+	}
 
 	if monochrome {
 		runMonochrome(img)
@@ -287,15 +308,66 @@ func scaleImage(img image.Image, maxCols int) image.Image {
 	}
 
 	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
-	// Nearest-neighbour downscale (adequate; images are further quantised anyway).
+	// Box-filter (area-average) downscale. Each output pixel accumulates the
+	// weighted average of all source pixels that overlap its footprint. This
+	// prevents aliasing of narrow vertical features that nearest-neighbour
+	// sampling would drop entirely.
 	for y := range newH {
+		// Source row range [y0, y1) that maps to output row y.
+		y0 := y * imgH / newH
+		y1 := (y+1) * imgH / newH
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
 		for x := range newW {
-			srcX := x * imgW / newW
-			srcY := y * imgH / newH
-			dst.Set(x, y, img.At(bounds.Min.X+srcX, bounds.Min.Y+srcY))
+			x0 := x * imgW / newW
+			x1 := (x+1) * imgW / newW
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var rSum, gSum, bSum, n float64
+			for sy := y0; sy < y1; sy++ {
+				for sx := x0; sx < x1; sx++ {
+					r, g, b, _ := img.At(bounds.Min.X+sx, bounds.Min.Y+sy).RGBA()
+					rSum += float64(r >> 8)
+					gSum += float64(g >> 8)
+					bSum += float64(b >> 8)
+					n++
+				}
+			}
+			dst.Set(x, y, color.RGBA{
+				R: uint8(rSum / n),
+				G: uint8(gSum / n),
+				B: uint8(bSum / n),
+				A: 255,
+			})
 		}
 	}
 	return dst
+}
+
+// midtoneFraction returns the fraction of pixels whose linear luminance falls
+// in the range (0.05, 0.75) — i.e. pixels that are neither clearly dark nor
+// clearly bright.  Values in that range indicate a true grayscale or colour
+// image where inter-block error diffusion is useful.  A near-bilevel image
+// (e.g. a 1-bit scan saved as JPEG) has essentially zero midtones.
+func midtoneFraction(img image.Image) float64 {
+	bounds := img.Bounds()
+	total, mid := 0, 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			p := toLinRGB(img.At(x, y))
+			lum := 0.2126*p[0] + 0.7152*p[1] + 0.0722*p[2]
+			if lum > 0.05 && lum < 0.75 {
+				mid++
+			}
+			total++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(mid) / float64(total)
 }
 
 func runColor(img image.Image) {
@@ -303,10 +375,19 @@ func runColor(img image.Image) {
 	blockW := (bounds.Dx() + 1) / 2
 	blockH := (bounds.Dy() + 3) / 4
 
+	// Disable inter-block error diffusion for near-bilevel images.  The block-
+	// level Floyd-Steinberg pass is designed to dither mid-tone regions toward
+	// neighbouring blocks; for an image that is already essentially 1-bit it
+	// just accumulates JPEG-artifact noise and cascades pixel flips.
+	dither := midtoneFraction(img) > 0.02
+
 	// Per-block accumulated error in linear RGB, propagated Floyd-Steinberg style.
 	errBuf := make([]linRGB, blockW*blockH)
 
 	spread := func(bx, by int, err linRGB, weight float64) {
+		if !dither {
+			return
+		}
 		if bx >= 0 && bx < blockW && by >= 0 && by < blockH {
 			errBuf[by*blockW+bx] = errBuf[by*blockW+bx].add(err.scale(weight))
 		}
@@ -316,7 +397,7 @@ func runColor(img image.Image) {
 		for bx := 0; bx < blockW; bx++ {
 			x := bounds.Min.X + bx*2
 			y := bounds.Min.Y + by*4
-			fore, back, r, blockErr := processBlock(img, x, y, bounds, errBuf[by*blockW+bx])
+			fore, back, r, _, blockErr := processBlock(img, x, y, bounds, errBuf[by*blockW+bx])
 			printBlock(fore, back, r)
 
 			spread(bx+1, by, blockErr, 7.0/16)
@@ -332,15 +413,16 @@ func runColor(img image.Image) {
 //   - foreground and background colors (sRGB) computed as the mean of their
 //     respective classified pixels (improvement #3)
 //   - the octant character matching the per-pixel classification
+//   - the 8-bit classification index (bit n set ↔ pixel n is foreground)
 //   - the block error vector (linear RGB) for error diffusion (improvement #2)
 //
 // Pixels are linearised before all operations (improvement #1), and
 // classification uses perceptually-weighted distance (improvement #4).
 // The accumulated error from neighbouring blocks is applied before quantising.
-func processBlock(img image.Image, x, y int, bounds image.Rectangle, accErr linRGB) (color.Color, color.Color, rune, linRGB) {
+func processBlock(img image.Image, x, y int, bounds image.Rectangle, accErr linRGB) (color.Color, color.Color, rune, int, linRGB) {
 	// Collect pixels in linear space and apply accumulated error.
 	var orig [8]linRGB
-	shifted := image.NewRGBA(image.Rect(0, 0, 2, 4))
+	var shifted [8]linRGB
 	for dy := 0; dy < 4; dy++ {
 		for dx := 0; dx < 2; dx++ {
 			px, py := x+dx, y+dy
@@ -349,16 +431,26 @@ func processBlock(img image.Image, x, y int, bounds image.Rectangle, accErr linR
 				py >= bounds.Min.Y && py < bounds.Max.Y {
 				orig[i] = toLinRGB(img.At(px, py))
 			}
-			// Shift by accumulated error and convert back to sRGB for the quantizer.
-			shifted.Set(dx, dy, orig[i].add(accErr).clamp().toColor())
+			shifted[i] = orig[i].add(accErr).clamp()
 		}
 	}
 
-	// Quantize the error-shifted block to two colors.
-	palette := quantize.MedianCutQuantizer{}.Quantize(make([]color.Color, 0, 2), shifted)
-	linPal := make([]linRGB, len(palette))
-	for i, p := range palette {
-		linPal[i] = toLinRGB(p)
+	// Quantize the error-shifted block to two colors in linear space.
+	// quantize2 seeds clusters from the most perceptually-distant pair so that
+	// single-pixel outliers (e.g. JPEG edge artifacts) always form their own
+	// cluster rather than being swallowed by the majority cluster.
+	linPal := quantize2(shifted[:])
+
+	// Normalize palette order: linPal[1] is the darker color (foreground convention).
+	// This ensures canonical characters are used — e.g. ▌ (index 0x55) for a
+	// left-dark block rather than ▐ (0xAA) with a dark background, which some
+	// terminal fonts render with slightly different width/alignment.
+	if len(linPal) > 1 {
+		lum0 := 0.2126*linPal[0][0] + 0.7152*linPal[0][1] + 0.0722*linPal[0][2]
+		lum1 := 0.2126*linPal[1][0] + 0.7152*linPal[1][1] + 0.0722*linPal[1][2]
+		if lum0 < lum1 {
+			linPal[0], linPal[1] = linPal[1], linPal[0]
+		}
 	}
 
 	// Classify each pixel, accumulate per-class means, build the octant index.
@@ -369,9 +461,7 @@ func processBlock(img image.Image, x, y int, bounds image.Rectangle, accErr linR
 	for dy := 3; dy >= 0; dy-- {
 		for _, dx := range []int{1, 0} {
 			i := dy*2 + dx
-			// Use the shifted pixel for classification so the error shift
-			// influences which cluster each borderline pixel falls into.
-			s := orig[i].add(accErr).clamp()
+			s := shifted[i] // error-shifted pixel, already clamped
 			index <<= 1
 			class := 0
 			if len(linPal) > 1 {
@@ -412,7 +502,7 @@ func processBlock(img image.Image, x, y int, bounds image.Rectangle, accErr linR
 	if r == 0 {
 		r = ' '
 	}
-	return foreColor.toColor(), backColor.toColor(), r, blockErr
+	return foreColor.toColor(), backColor.toColor(), r, index, blockErr
 }
 
 func runMonochrome(img image.Image) {
@@ -483,4 +573,128 @@ func printBlock(foreColor, backColor color.Color, octant rune) {
 	b := color.RGBAModel.Convert(backColor).(color.RGBA)
 	fmt.Printf("\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm%c\033[0m",
 		f.R, f.G, f.B, b.R, b.G, b.B, octant)
+}
+
+// renderToPNG runs the same octant algorithm as the terminal output but writes
+// the result to a PNG file. Each octant cell (2×4 source pixels) is rendered as
+// exactly 2×4 pixels in the output, so the output dimensions equal the source
+// dimensions (rounded up to the nearest 2×4 block boundary).
+func renderToPNG(img image.Image, outPath string, monochrome bool) {
+	bounds := img.Bounds()
+	imgW, imgH := bounds.Dx(), bounds.Dy()
+	blockW := (imgW + 1) / 2
+	blockH := (imgH + 3) / 4
+
+	out := image.NewRGBA(image.Rect(0, 0, blockW*2, blockH*4))
+
+	if monochrome {
+		w, h := imgW, imgH
+		lum := make([]float64, w*h)
+		for y := range h {
+			for x := range w {
+				p := toLinRGB(img.At(bounds.Min.X+x, bounds.Min.Y+y))
+				lum[y*w+x] = 0.2126*p[0] + 0.7152*p[1] + 0.0722*p[2]
+			}
+		}
+		for y := range h {
+			for x := range w {
+				old := lum[y*w+x]
+				var nv float64
+				if old >= 0.5 {
+					nv = 1.0
+				}
+				lum[y*w+x] = nv
+				e := old - nv
+				if x+1 < w {
+					lum[y*w+x+1] = clampF(lum[y*w+x+1] + e*7/16)
+				}
+				if x > 0 && y+1 < h {
+					lum[(y+1)*w+x-1] = clampF(lum[(y+1)*w+x-1] + e*3/16)
+				}
+				if y+1 < h {
+					lum[(y+1)*w+x] = clampF(lum[(y+1)*w+x] + e*5/16)
+				}
+				if x+1 < w && y+1 < h {
+					lum[(y+1)*w+x+1] = clampF(lum[(y+1)*w+x+1] + e*1/16)
+				}
+			}
+		}
+		for by := range blockH {
+			for bx := range blockW {
+				var index int
+				for dy := 3; dy >= 0; dy-- {
+					for _, dx := range []int{1, 0} {
+						index <<= 1
+						nx, ny := bx*2+dx, by*4+dy
+						if nx < w && ny < h && lum[ny*w+nx] > 0.5 {
+							index |= 1
+						}
+					}
+				}
+				for dy := range 4 {
+					for dx := range 2 {
+						bit := dy*2 + dx
+						var c color.Color
+						if index&(1<<bit) != 0 {
+							c = color.White
+						} else {
+							c = color.Black
+						}
+						out.Set(bx*2+dx, by*4+dy, c)
+					}
+				}
+			}
+		}
+	} else {
+		dither := midtoneFraction(img) > 0.02
+		errBuf := make([]linRGB, blockW*blockH)
+		spread := func(bx, by int, err linRGB, weight float64) {
+			if !dither {
+				return
+			}
+			if bx >= 0 && bx < blockW && by >= 0 && by < blockH {
+				errBuf[by*blockW+bx] = errBuf[by*blockW+bx].add(err.scale(weight))
+			}
+		}
+		for by := range blockH {
+			for bx := range blockW {
+				x := bounds.Min.X + bx*2
+				y := bounds.Min.Y + by*4
+				fore, back, _, idx, blockErr := processBlock(img, x, y, bounds, errBuf[by*blockW+bx])
+
+				spread(bx+1, by, blockErr, 7.0/16)
+				spread(bx-1, by+1, blockErr, 3.0/16)
+				spread(bx, by+1, blockErr, 5.0/16)
+				spread(bx+1, by+1, blockErr, 1.0/16)
+
+				// Use the index from processBlock directly: bit (dy*2+dx) set → foreground.
+				foreRGBA := color.RGBAModel.Convert(fore).(color.RGBA)
+				backRGBA := color.RGBAModel.Convert(back).(color.RGBA)
+				for dy := range 4 {
+					for dx := range 2 {
+						bit := dy*2 + dx
+						var c color.Color
+						if idx&(1<<bit) != 0 {
+							c = foreRGBA
+						} else {
+							c = backRGBA
+						}
+						out.Set(bx*2+dx, by*4+dy, c)
+					}
+				}
+			}
+		}
+	}
+
+	f, err := os.Create(outPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error creating png:", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	if err := png.Encode(f, out); err != nil {
+		fmt.Fprintln(os.Stderr, "error encoding png:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s (%dx%d)\n", outPath, blockW*2, blockH*4)
 }
