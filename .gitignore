@@ -7,6 +7,6 @@
 !images/*.jpg
 !images/*.gif
 !images/*.png
-octant
-octantgore
+/octant
+/octantgore
 
