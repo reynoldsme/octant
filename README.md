@@ -27,7 +27,13 @@ Your terminal must use a font that includes the Unicode 16.0 octant characters. 
 
 ## CLI
 
-### Build and Install
+### Install
+
+```shell
+go install github.com/reynoldsme/octant/cmd/octant@latest
+```
+
+Or build from source:
 
 ```shell
 git clone git@github.com:reynoldsme/octant.git
@@ -57,7 +63,7 @@ the program receives `SIGINT` (Ctrl-C).
 Import the root package:
 
 ```go
-import "octant"
+import "github.com/reynoldsme/octant"
 ```
 
 ### Rendering a static image
@@ -133,7 +139,13 @@ func (t *Terminal) DrawFrame(img *image.RGBA)
 `octantgore` runs DOOM in the terminal using octant block rendering. It requires a
 DOOM WAD file (e.g. `doom.wad` from a retail or [freedoom release](https://github.com/freedoom/freedoom/releases)).
 
-### Build
+### Install
+
+```shell
+go install github.com/reynoldsme/octant/cmd/octantgore@latest
+```
+
+Or build from source:
 
 ```shell
 git clone git@github.com:reynoldsme/octant.git

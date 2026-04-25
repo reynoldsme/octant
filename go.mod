@@ -1,4 +1,4 @@
-module octant
+module github.com/reynoldsme/octant
 
 go 1.26.0
 

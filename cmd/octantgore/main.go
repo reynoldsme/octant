@@ -24,7 +24,7 @@ import (
 	"github.com/AndreRenaud/gore"
 	"golang.org/x/term"
 
-	"octant"
+	"github.com/reynoldsme/octant"
 )
 
 // octantFrontend implements gore.DoomFrontend using octant block rendering.
