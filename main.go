@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
+	"image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -242,13 +247,13 @@ func main() {
 	}
 
 	if filename == "" {
-		fmt.Fprintf(os.Stderr, "usage: %s [--mono] [--cols N] [--png out.png] <image.jpg|image.png>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [--mono] [--cols N] [--png out.png] <image.jpg|image.png|image.gif>\n", os.Args[0])
 		os.Exit(1)
 	}
 
 	ext := strings.ToLower(filename[strings.LastIndex(filename, ".")+1:])
-	if ext != "jpg" && ext != "jpeg" && ext != "png" {
-		fmt.Fprintf(os.Stderr, "unsupported format %q: must be jpeg or png\n", ext)
+	if ext != "jpg" && ext != "jpeg" && ext != "png" && ext != "gif" {
+		fmt.Fprintf(os.Stderr, "unsupported format %q: must be jpeg, png, or gif\n", ext)
 		os.Exit(1)
 	}
 
@@ -258,6 +263,34 @@ func main() {
 		os.Exit(1)
 	}
 	defer f.Close()
+
+	if ext == "gif" {
+		g, err := gif.DecodeAll(f)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error decoding gif:", err)
+			os.Exit(1)
+		}
+		if len(g.Image) == 0 {
+			fmt.Fprintln(os.Stderr, "empty gif")
+			os.Exit(1)
+		}
+		frames := composeGIFFrames(g)
+		if len(frames) == 1 || pngOut != "" {
+			img := scaleImage(frames[0], maxCols)
+			if pngOut != "" {
+				renderToPNG(img, pngOut, monochrome)
+				return
+			}
+			if monochrome {
+				runMonochrome(img)
+			} else {
+				runColor(img)
+			}
+			return
+		}
+		runAnimatedGIF(g, frames, maxCols, monochrome)
+		return
+	}
 
 	img, _, err := image.Decode(f)
 	if err != nil {
@@ -697,4 +730,124 @@ func renderToPNG(img image.Image, outPath string, monochrome bool) {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s (%dx%d)\n", outPath, blockW*2, blockH*4)
+}
+
+// composeGIFFrames composites all frames of g onto a canvas, respecting each
+// frame's disposal method. Returns one fully-composited image per frame.
+func composeGIFFrames(g *gif.GIF) []image.Image {
+	width, height := g.Config.Width, g.Config.Height
+	if width == 0 || height == 0 {
+		b := g.Image[0].Bounds()
+		width, height = b.Max.X, b.Max.Y
+	}
+
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
+
+	frames := make([]image.Image, len(g.Image))
+	var saved *image.RGBA // snapshot for DisposalPrevious
+
+	for i, frame := range g.Image {
+		// Apply the disposal method declared by the previous frame.
+		if i > 0 {
+			prevDisposal := byte(0)
+			if i-1 < len(g.Disposal) {
+				prevDisposal = g.Disposal[i-1]
+			}
+			switch prevDisposal {
+			case 2: // restore previous frame's area to background
+				draw.Draw(canvas, g.Image[i-1].Bounds(), image.White, image.Point{}, draw.Src)
+			case 3: // restore to the saved snapshot
+				if saved != nil {
+					draw.Draw(canvas, canvas.Bounds(), saved, image.Point{}, draw.Src)
+				}
+			}
+		}
+
+		// If this frame requests DisposalPrevious, save canvas before drawing.
+		curDisposal := byte(0)
+		if i < len(g.Disposal) {
+			curDisposal = g.Disposal[i]
+		}
+		if curDisposal == 3 {
+			saved = image.NewRGBA(canvas.Bounds())
+			draw.Draw(saved, canvas.Bounds(), canvas, image.Point{}, draw.Src)
+		}
+
+		// Composite the paletted frame onto the canvas.
+		draw.Draw(canvas, frame.Bounds(), frame, frame.Bounds().Min, draw.Over)
+
+		// Snapshot the composited canvas for this frame.
+		snap := image.NewRGBA(canvas.Bounds())
+		draw.Draw(snap, canvas.Bounds(), canvas, image.Point{}, draw.Src)
+		frames[i] = snap
+	}
+	return frames
+}
+
+// runAnimatedGIF renders the pre-composited frames to the terminal, cycling
+// at each frame's delay. If the GIF's LoopCount is >= 0 the animation loops
+// until SIGINT or SIGTERM; otherwise it plays once.
+func runAnimatedGIF(g *gif.GIF, frames []image.Image, maxCols int, monochrome bool) {
+	scaled := make([]image.Image, len(frames))
+	for i, f := range frames {
+		scaled[i] = scaleImage(f, maxCols)
+	}
+
+	blockH := (scaled[0].Bounds().Dy() + 3) / 4
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	// Hide cursor to reduce flicker during animation.
+	fmt.Print("\033[?25l")
+	defer fmt.Print("\033[?25h\n")
+
+	playOnce := func() bool {
+		for i, img := range scaled {
+			// Overwrite the previous frame by moving the cursor up.
+			if i > 0 {
+				fmt.Printf("\033[%dA", blockH)
+			}
+
+			if monochrome {
+				runMonochrome(img)
+			} else {
+				runColor(img)
+			}
+
+			delay := g.Delay[i]
+			if delay < 2 {
+				delay = 2 // floor at 20 ms to avoid busy-loop
+			}
+			select {
+			case <-sigs:
+				return false
+			case <-time.After(time.Duration(delay) * 10 * time.Millisecond):
+			}
+		}
+		return true
+	}
+
+	if !playOnce() {
+		return
+	}
+
+	// LoopCount < 0 means play once; >= 0 means the GIF loops.
+	if g.LoopCount < 0 {
+		return
+	}
+	for {
+		// Move back to the top of the rendered block to start the next loop.
+		fmt.Printf("\033[%dA", blockH)
+		select {
+		case <-sigs:
+			return
+		default:
+		}
+		if !playOnce() {
+			return
+		}
+	}
 }
