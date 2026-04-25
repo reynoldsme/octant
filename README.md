@@ -4,24 +4,20 @@ A Go CLI tool and library for rendering images and GIF animations in the termina
 [octant block characters](https://www.unicode.org/charts/PDF/Unicode-16.0/U160-1CC00.pdf)
 with ANSI 24-bit truecolor.
 
-Each terminal cell is treated as a **2-column x 4-row pixel grid**. The 256
-possible fill patterns map to Unicode block characters — the 230 octant characters
-in `U+1CD00`–`U+1CDE5` plus legacy block-drawing characters for the
-patterns they already cover. This gives twice the horizontal and four times the
-vertical resolution of plain half-block rendering, at the cost of each cell being
-limited to two colors.
+Each terminal cell is treated as a **2-column x 4-row pixel grid**. The 256 possible fill patterns map to Unicode block characters — the 230 octant characters in `U+1CD00`–`U+1CDE5` plus legacy block-drawing characters for the patterns they already cover. This gives twice the horizontal and four times the vertical resolution of plain half-block rendering, at the cost of each cell being limited to two colors.
 
 ![image](images/example-tsunami.jpg)
 
+Yes, you can [run doom](#octantgore--doom-in-the-terminal)!
 ![image](images/example-octantgore.jpg)
 
 
 ---
 
-## Font requirement
+## Unicode 16.0 Font Requirement
 
 Your terminal must use a font that includes the Unicode 16.0 octant characters. These are new enough (circa ~2024) your system may not ship with them. 
-[Cascadia Code](https://github.com/microsoft/cascadia-code/releases) includes these. You may use a tool like [getnf](https://github.com/getnf/getnf) to download and install the font, or or install the `.ttf` from the latest GitHub release. Some terminals seem to automatically fall back on other installed fonts for missing glyphs, but when in doubt, select that font directly.
+[Cascadia Code](https://github.com/microsoft/cascadia-code/releases) includes these. You may use a tool like [getnf](https://github.com/getnf/getnf) to download and install the font, or or install the `.ttf` from the latest GitHub release. Most recently updated Nerd Fonts appear to now include these. Some terminals seem to automatically fall back on other installed fonts for missing glyphs, but when in doubt, select that font directly.
 
 ---
 
@@ -136,8 +132,7 @@ func (t *Terminal) DrawFrame(img *image.RGBA)
 
 ## octantgore — DOOM in the terminal
 
-`octantgore` runs DOOM in the terminal using octant block rendering. It requires a
-DOOM WAD file (e.g. `doom.wad` from a retail or [freedoom release](https://github.com/freedoom/freedoom/releases)).
+`octantgore` runs DOOM in the terminal using octant block rendering. It requires a DOOM WAD file (e.g. `doom.wad` from a retail or [freedoom release](https://github.com/freedoom/freedoom/releases)).
 
 ### Install
 

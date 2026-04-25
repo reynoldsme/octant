@@ -1,4 +1,12 @@
 *.jpg
+*.jpeg
+*.wad
+*.WAD
+*.gif
+*.png
 !images/*.jpg
+!images/*.gif
+!images/*.png
 octant
+octantgore
 

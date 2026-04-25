@@ -128,7 +128,7 @@ type Terminal struct {
 	// 2 pixels wide). 0 auto-detects from W when W is an *os.File, falling
 	// back to os.Stdout.
 	MaxCols int
-	// Mono selects monochrome (1-bit dithered) output instead of full colour.
+	// Mono selects monochrome (1-bit dithered) output instead of full color.
 	Mono bool
 }
 
@@ -317,7 +317,7 @@ func Scale(img image.Image, maxCols int) image.Image {
 
 	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
 	// Box-filter (area-average) downscale to avoid aliasing of narrow vertical
-	// features that nearest-neighbour sampling would drop entirely.
+	// features that nearest-neighbor sampling would drop entirely.
 	for y := range newH {
 		y0 := y * imgH / newH
 		y1 := (y+1) * imgH / newH
@@ -369,7 +369,7 @@ func midtoneFraction(img image.Image) float64 {
 	return float64(mid) / float64(total)
 }
 
-// Render renders img as octant-block characters with ANSI 24-bit colour to w.
+// Render renders img as octant-block characters with ANSI 24-bit color to w.
 // The image is assumed to already be scaled to the desired output size; use
 // Scale first if you need to fit a particular terminal width.
 func Render(img image.Image, w io.Writer) {
