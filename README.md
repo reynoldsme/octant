@@ -1,6 +1,6 @@
-# octant
+# Octant
 
-A Go CLI tool and library for rendering images and GIF animations in the terminal using Unicode 16.0
+Octant is a Go CLI tool and library for rendering images and GIF animations in the terminal using Unicode 16.0
 [octant block characters](https://www.unicode.org/charts/PDF/Unicode-16.0/U160-1CC00.pdf)
 with ANSI 24-bit truecolor.
 
