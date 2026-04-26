@@ -38,7 +38,7 @@ func drawOverlay(w io.Writer, cfg oscilloscope.Config, rows int) {
 
 	// Line 3: remaining toggles.
 	line3 := fmt.Sprintf(
-		" \x1b[2;37mg grid:%s   f freeze:%s   q quit\x1b[0m",
+		" \x1b[2;37mg grid:%s   f freeze:%s   r reset   q quit\x1b[0m",
 		gridLabel[cfg.GridMode%3], onOff(cfg.FreezeImage),
 	)
 

@@ -46,7 +46,7 @@ func DefaultConfig() Config {
 		Persistence:   0.0,
 		GridMode:      0,
 		SweepOn:       true,
-		SweepMsDiv:    4.0,
+		SweepMsDiv:    1.0,
 		AValue:        3.0,
 		BValue:        2.0,
 		AExponent:     2,

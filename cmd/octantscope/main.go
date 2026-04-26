@@ -42,6 +42,7 @@
 //	g            Cycle grid: black → colored → off
 //	s            Toggle sweep
 //	f            Freeze display
+//	r            Reset all display settings to defaults
 //	h / H        Hue -10 / +10
 //	p / P        Persistence -0.1 / +0.1
 //	+ / -        Gain +0.25 / -0.25
@@ -80,7 +81,7 @@ var (
 	flagSweep       = flag.Bool("sweep", true, "enable time-base sweep mode")
 	flagSweepAuto   = flag.Bool("auto-trigger", false, "auto-retrigger sweep when no edge is found")
 	flagSweepTrig   = flag.Float64("sweep-trigger", 0.0, "sweep trigger level (-1 to 1)")
-	flagSweepMsDiv  = flag.Float64("sweep-ms-div", 4.0, "sweep ms/div (0.25,0.5,1,2,4,8,16,32)")
+	flagSweepMsDiv  = flag.Float64("sweep-ms-div", 1.0, "sweep ms/div (0.25,0.5,1,2,4,8,16,32)")
 	flagSwapXY      = flag.Bool("swap-xy", false, "swap X and Y axes")
 	flagInvertX     = flag.Bool("invert-x", false, "invert X axis")
 	flagInvertY     = flag.Bool("invert-y", false, "invert Y axis")
@@ -169,7 +170,14 @@ func main() {
 		rows = 24
 	}
 
-	cfg := configFromFlags()
+	cfg := loadSettings()
+	applyExplicitFlags(&cfg)
+	cfg.SignalGeneratorOn = *flagSigGen
+	cfg.DisableFilter = *flagNoFilter
+	cfg.SwapXY = *flagSwapXY
+	cfg.InvertX = *flagInvertX
+	cfg.InvertY = *flagInvertY
+	cfg.FreezeImage = false
 	scope := oscilloscope.New(cfg, sampleRate)
 	scope.Resize(cols*2, rows*4)
 
@@ -294,6 +302,7 @@ func main() {
 			if handleKey(b, scope, &cfg) {
 				return
 			}
+			saveSettings(cfg)
 		}
 	}
 }
@@ -494,6 +503,14 @@ func handleKey(b byte, scope *oscilloscope.Scope, cfg *oscilloscope.Config) bool
 		cfg.MainGain = clamp(cfg.MainGain+0.25, -1, 4)
 	case '-':
 		cfg.MainGain = clamp(cfg.MainGain-0.25, -1, 4)
+	case 'r':
+		fresh := oscilloscope.DefaultConfig()
+		fresh.SignalGeneratorOn = cfg.SignalGeneratorOn
+		fresh.DisableFilter = cfg.DisableFilter
+		fresh.SwapXY = cfg.SwapXY
+		fresh.InvertX = cfg.InvertX
+		fresh.InvertY = cfg.InvertY
+		*cfg = fresh
 	}
 	scope.SetConfig(*cfg)
 	return false

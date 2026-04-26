@@ -7,6 +7,7 @@
 !images/*.jpg
 !images/*.gif
 !images/*.png
+.playwright-mcp/
 octant
 octantgore
 
