@@ -1,5 +1,7 @@
 github.com/AndreRenaud/gore v0.0.0-20260413081714-8cf61e239e98 h1:DTbs+KiPUMyNQHGUNw8fAWHF/kCMp9fBnKHjXuFeMbY=
 github.com/AndreRenaud/gore v0.0.0-20260413081714-8cf61e239e98/go.mod h1:uCXovfcR1SySGAiv5emvO9XIzVz69Xc13gp2ld892Q8=
+github.com/gordonklaus/portaudio v0.0.0-20260203164431-765aa7dfa631 h1:8TBHztmhDfAAg34yddptshinXBtDQwgKGlMfdtSFETw=
+github.com/gordonklaus/portaudio v0.0.0-20260203164431-765aa7dfa631/go.mod h1:esZFQEUwqC+l76f2R8bIWSwXMaPbp79PppwZ1eJhFco=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
 golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.42.0 h1:UiKe+zDFmJobeJ5ggPwOshJIVt6/Ft0rcfrXZDLWAWY=
