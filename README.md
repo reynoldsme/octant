@@ -26,7 +26,7 @@ Your terminal must use a font that includes the Unicode 16.0 octant characters. 
 ### Install
 
 ```shell
-go install github.com/reynoldsme/octant/cmd/octant@latest
+go install github.com/reynoldsme/octant/cmd/octant@v0.1.0
 ```
 
 Or build from source:
@@ -137,7 +137,7 @@ func (t *Terminal) DrawFrame(img *image.RGBA)
 ### Install
 
 ```shell
-go install github.com/reynoldsme/octant/cmd/octantgore@latest
+go install github.com/reynoldsme/octant/cmd/octantgore@v0.1.0
 ```
 
 Or build from source:
