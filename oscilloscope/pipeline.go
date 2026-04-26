@@ -55,13 +55,17 @@ func (s *Scope) feed(samples [][2]float64) *image.RGBA {
 	// Step 6: Draw line segments into the accumulation buffer.
 	// sigma scales with display height so the beam width is proportional.
 	sigma := math.Max(float64(s.height)/200.0, 1.0)
-	// Arc-length-normalized gain: each segment deposits (drawGain * segLen / sigma)
-	// so energy per unit arc is constant regardless of trace velocity.
-	// This prevents over-saturation at slow-moving trace extremes.
-	// Skip segments longer than 30σ — these are discontinuous jumps (e.g. the
-	// sweep trigger reset from off-screen back to -1.3) that would get enormous
+	// Arc-length-normalized gain: each segment contributes (drawGain × segLen / sigma)
+	// to the accumulation buffer, so energy per traced pixel is proportional to
+	// drawGain for slow traces (where all segments pile on the same pixel).
+	// For fast audio signals (dY >> 0), overlapping Gaussians give ~√(2π) more
+	// energy per pixel — audio naturally appears brighter than a near-stationary
+	// siggen trace at the same drawGain, which is physically correct (fast beam
+	// visits each pixel less often per sweep pass).
+	// Skip segments longer than 30σ — these are discontinuous jumps (sweep
+	// trigger reset from off-screen back to -1.3) that would get enormous
 	// arc-length-scaled gain and flood the entire canvas with energy.
-	drawGain := 4.0
+	const drawGain = 0.8
 	maxSegLen := 30 * sigma
 	for i := 1; i < len(samples); i++ {
 		x0, y0 := samples[i-1][0], samples[i-1][1]

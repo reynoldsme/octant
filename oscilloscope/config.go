@@ -49,8 +49,8 @@ func DefaultConfig() Config {
 		SweepMsDiv:    4.0,
 		AValue:        3.0,
 		BValue:        2.0,
-		AExponent:     0,
-		BExponent:     0,
+		AExponent:     2,
+		BExponent:     2,
 		XExpression:   "sin(2*PI*a*t)*cos(2*PI*b*t)",
 		YExpression:   "cos(2*PI*a*t)*cos(2*PI*b*t)",
 	}

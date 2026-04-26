@@ -31,9 +31,9 @@
 //	--x-expr string   Signal generator X expression
 //	--y-expr string   Signal generator Y expression
 //	--a float         Signal generator 'a' parameter (default 3)
-//	--a-exp int       Signal generator 'a' exponent 0-3 (default 0)
+//	--a-exp int       Signal generator 'a' exponent 0-3 (default 2 → 300 Hz)
 //	--b float         Signal generator 'b' parameter (default 2)
-//	--b-exp int       Signal generator 'b' exponent 0-3 (default 0)
+//	--b-exp int       Signal generator 'b' exponent 0-3 (default 2 → 200 Hz)
 //	--cols int        Output width in columns (0 = auto-detect)
 //
 // Keyboard controls (while running):
@@ -90,9 +90,9 @@ var (
 	flagXExpr       = flag.String("x-expr", "sin(2*PI*a*t)*cos(2*PI*b*t)", "signal generator X expression")
 	flagYExpr       = flag.String("y-expr", "cos(2*PI*a*t)*cos(2*PI*b*t)", "signal generator Y expression")
 	flagA           = flag.Float64("a", 3.0, "signal generator 'a' parameter (0.5-5)")
-	flagAExp        = flag.Int("a-exp", 0, "signal generator 'a' exponent 0-3")
+	flagAExp        = flag.Int("a-exp", 2, "signal generator 'a' exponent 0-3")
 	flagB           = flag.Float64("b", 2.0, "signal generator 'b' parameter (0.5-5)")
-	flagBExp        = flag.Int("b-exp", 0, "signal generator 'b' exponent 0-3")
+	flagBExp        = flag.Int("b-exp", 2, "signal generator 'b' exponent 0-3")
 	flagCols        = flag.Int("cols", 0, "output width in columns (0 = auto-detect)")
 	flagWAV         = flag.String("wav", "", "read audio from WAV file instead of live input")
 	flagPNG         = flag.String("png", "", "render final frame to PNG file and exit")
