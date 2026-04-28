@@ -2,6 +2,22 @@ package oscilloscope
 
 import "math"
 
+// expLUT is a precomputed table of exp(-x) for x ∈ [0, 4.5].
+// drawSegment's Gaussian argument is dist²·inv2σ² ∈ [0, 4.5] (the 3σ cutoff),
+// so a 512-entry table gives ~0.9% maximum error — imperceptible for a glow.
+const (
+	expTableSize  = 512
+	expTableScale = float64(expTableSize-1) / 4.5 // maps [0, 4.5] → [0, 511]
+)
+
+var expLUT [expTableSize]float32
+
+func init() {
+	for i := range expLUT {
+		expLUT[i] = float32(math.Exp(-float64(i) / expTableScale))
+	}
+}
+
 // drawSegment rasterizes a line segment from (x0,y0) to (x1,y1) into buf.
 //
 // Coordinates are in normalized space [-1, 1]×[-1, 1]; the buffer is
@@ -43,6 +59,7 @@ func drawSegment(buf []float32, width, height int, x0, y0, x1, y1, gain, sigma f
 
 	inv2SigSq := 1.0 / (2.0 * sigma * sigma)
 	inflateSq := inflate * inflate
+	gainF32 := float32(gain)
 
 	for py := minY; py <= maxY; py++ {
 		row := buf[py*width:]
@@ -67,7 +84,11 @@ func drawSegment(buf []float32, width, height int, x0, y0, x1, y1, gain, sigma f
 			if dist2 > inflateSq {
 				continue
 			}
-			row[px] += float32(gain * math.Exp(-dist2*inv2SigSq))
+			xi := int(dist2 * inv2SigSq * expTableScale)
+			if xi >= expTableSize {
+				xi = expTableSize - 1
+			}
+			row[px] += gainF32 * expLUT[xi]
 		}
 	}
 }

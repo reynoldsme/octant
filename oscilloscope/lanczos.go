@@ -46,15 +46,13 @@ func precomputeKernel(a, steps int) [][]float64 {
 	return kernel
 }
 
-// upsampleWithKernel applies the polyphase Lanczos filter, returning
-// steps × len(samples) output samples.
-func upsampleWithKernel(samples [][2]float64, kernel [][]float64, a, steps int) [][2]float64 {
+// upsampleInto applies the polyphase Lanczos filter into a pre-allocated out
+// slice. out must have length len(samples)*steps. Using explicit i0/phase
+// counters avoids a division and modulo per output sample.
+func upsampleInto(out, samples [][2]float64, kernel [][]float64, a, steps int) {
 	nIn := len(samples)
-	nOut := nIn * steps
-	out := make([][2]float64, nOut)
-	for oi := range nOut {
-		i0 := oi / steps
-		phase := oi % steps
+	i0, phase := 0, 0
+	for oi := range out {
 		taps := kernel[phase]
 		var sx, sy float64
 		for t, w := range taps {
@@ -69,6 +67,18 @@ func upsampleWithKernel(samples [][2]float64, kernel [][]float64, a, steps int) 
 		}
 		out[oi][0] = sx
 		out[oi][1] = sy
+		phase++
+		if phase == steps {
+			phase = 0
+			i0++
+		}
 	}
+}
+
+// upsampleWithKernel applies the polyphase Lanczos filter, returning
+// steps × len(samples) output samples.
+func upsampleWithKernel(samples [][2]float64, kernel [][]float64, a, steps int) [][2]float64 {
+	out := make([][2]float64, len(samples)*steps)
+	upsampleInto(out, samples, kernel, a, steps)
 	return out
 }

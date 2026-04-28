@@ -55,6 +55,9 @@ type Scope struct {
 	// Precomputed Lanczos polyphase filter kernel; nil when DisableFilter.
 	lanczosKernel [][]float64
 
+	// Reusable output buffer for Lanczos upsampling; grown as needed.
+	upsampleBuf [][2]float64
+
 	// Track previous expression strings to detect changes in SetConfig.
 	prevXExpr string
 	prevYExpr string

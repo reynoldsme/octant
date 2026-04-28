@@ -30,7 +30,14 @@ func (s *Scope) feed(samples [][2]float64) *image.RGBA {
 
 	// Step 3: Lanczos upsample.
 	if !cfg.DisableFilter && s.lanczosKernel != nil {
-		samples = upsampleWithKernel(samples, s.lanczosKernel, lanczosA, lanczosSteps)
+		nOut := len(samples) * lanczosSteps
+		if cap(s.upsampleBuf) < nOut {
+			s.upsampleBuf = make([][2]float64, nOut)
+		} else {
+			s.upsampleBuf = s.upsampleBuf[:nOut]
+		}
+		upsampleInto(s.upsampleBuf, samples, s.lanczosKernel, lanczosA, lanczosSteps)
+		samples = s.upsampleBuf
 	}
 
 	// Step 4: Sweep / time-base.
@@ -113,11 +120,15 @@ func applyTransforms(samples [][2]float64, cfg Config) [][2]float64 {
 // Sigmas are chosen so the glow spans multiple terminal character rows at
 // typical terminal resolutions (each char row = 4 pixel rows for octant chars).
 func (s *Scope) computeGlow() {
-	// Tight glow: exact Gaussian (small kernel, sigma = height/40).
+	// Tight glow: three-pass box blur approximating a Gaussian.
 	tightSigma := math.Max(float64(s.height)/40.0, 1.0)
-	kt := buildGaussianKernel(tightSigma)
-	blurH(s.blurTmp, s.accumBuf, s.width, s.height, kt)
-	blurV(s.tightBuf, s.blurTmp, s.width, s.height, kt)
+	tr := gaussBoxRadii(tightSigma)
+	boxBlurH(s.blurTmp, s.accumBuf, s.width, s.height, tr[0])
+	boxBlurV(s.tightBuf, s.blurTmp, s.width, s.height, tr[0])
+	boxBlurH(s.blurTmp, s.tightBuf, s.width, s.height, tr[1])
+	boxBlurV(s.tightBuf, s.blurTmp, s.width, s.height, tr[1])
+	boxBlurH(s.blurTmp, s.tightBuf, s.width, s.height, tr[2])
+	boxBlurV(s.tightBuf, s.blurTmp, s.width, s.height, tr[2])
 
 	// Scatter glow: three-pass box blur approximating a Gaussian.
 	// Exact kernel size is O(height); box blur is O(width×height) per pass
@@ -138,6 +149,10 @@ func (s *Scope) toRGBA(cfg Config) *image.RGBA {
 	// Match reference: brightness = 2^(exposureStops - 2), so default (0 stops)
 	// gives 0.25. ExposureStops doubles/halves per stop.
 	exposure := math.Pow(2, cfg.ExposureStops-2)
+	// Precompute so the per-pixel tone-map uses Exp instead of Pow.
+	// math.Pow(2, x) = math.Exp(x * math.Ln2), but Pow calls Log internally;
+	// precomputing expScale eliminates that per-pixel Log call.
+	expScale := exposure * math.Ln2
 
 	// Base hue color from reference getColourFromHue (perceptual sqrt blend).
 	hr, hg, hb := hueToRGB(cfg.Hue)
@@ -149,30 +164,30 @@ func (s *Scope) toRGBA(cfg Config) *image.RGBA {
 		//   scatter weight = 0.4 * (2 + screen.g + 0) = 0.4 * 2.5 = 1.0
 		// Background: light = 1.0*0.35 = 0.35 → t≈0.059 → g≈15 (matches ref g=16).
 		scatter := float64(s.scatterBuf[i]) + 0.35
-		light := float64(s.accumBuf[i]) + 0.375*float64(s.tightBuf[i]) + 1.0*scatter
+		light := float64(s.accumBuf[i]) + 0.375*float64(s.tightBuf[i]) + scatter
 
 		// Tone-map: maps [0,∞) → [0,1).
-		t := 1.0 - math.Pow(2, -exposure*light)
+		t := 1.0 - math.Exp(-expScale*light)
 		if t < 0 {
 			t = 0
 		}
 
 		// Reference color formula: mix(colour, white, 0.3 + t^6*0.5) * t
 		// The 0.3 base bleach gives warmth even at low intensities.
-		t2 := t * t * t       // t^3
-		t2 = t2 * t2          // t^6
+		// blend ∈ [0.3, 0.8] (t ∈ [0,1], so t^6 ∈ [0,1], blend ≤ 0.8).
+		// cr/cg/cb ∈ [0,1] provably, so no clamping is needed before uint8 cast.
+		t2 := t * t * t // t^3
+		t2 = t2 * t2    // t^6
 		blend := 0.3 + t2*0.5
-		if blend > 1 {
-			blend = 1
-		}
-		cr := (hr*(1-blend) + blend) * t
-		cg := (hg*(1-blend) + blend) * t
-		cb := (hb*(1-blend) + blend) * t
+		invBlend := 1 - blend
+		cr := (hr*invBlend + blend) * t
+		cg := (hg*invBlend + blend) * t
+		cb := (hb*invBlend + blend) * t
 
 		off := i * 4
-		pix[off+0] = uint8(clampF(cr, 0, 1) * 255)
-		pix[off+1] = uint8(clampF(cg, 0, 1) * 255)
-		pix[off+2] = uint8(clampF(cb, 0, 1) * 255)
+		pix[off+0] = uint8(cr * 255)
+		pix[off+1] = uint8(cg * 255)
+		pix[off+2] = uint8(cb * 255)
 		pix[off+3] = 255
 	}
 

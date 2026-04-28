@@ -240,7 +240,7 @@ func BenchmarkBlurH(b *testing.B) {
 	for i := range src {
 		src[i] = float32(i % 17)
 	}
-	k := buildGaussianKernel(float64(h) / 7.0) // scatter sigma (worst case)
+	k := buildGaussianKernel(float64(h) / 40.0) // tight sigma
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -255,7 +255,7 @@ func BenchmarkBlurV(b *testing.B) {
 	for i := range src {
 		src[i] = float32(i % 17)
 	}
-	k := buildGaussianKernel(float64(h) / 7.0)
+	k := buildGaussianKernel(float64(h) / 40.0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -310,6 +310,16 @@ func BenchmarkUpsample(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		upsampleWithKernel(audio, kernel, lanczosA, lanczosSteps)
+	}
+}
+
+func BenchmarkUpsampleInto(b *testing.B) {
+	kernel := precomputeKernel(lanczosA, lanczosSteps)
+	audio := makeSineAudio(1024)
+	buf := make([][2]float64, len(audio)*lanczosSteps)
+	b.ResetTimer()
+	for range b.N {
+		upsampleInto(buf, audio, kernel, lanczosA, lanczosSteps)
 	}
 }
 

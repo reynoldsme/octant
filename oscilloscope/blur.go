@@ -104,34 +104,36 @@ func boxBlurV(dst, src []float32, width, height int, radius int) {
 
 // buildGaussianKernel returns a normalized 1D Gaussian kernel sized to cover
 // ±3σ so that at least 99.7% of the distribution is captured.
-func buildGaussianKernel(sigma float64) []float64 {
+func buildGaussianKernel(sigma float64) []float32 {
 	if sigma < 0.5 {
-		return []float64{1.0}
+		return []float32{1.0}
 	}
 	radius := int(math.Ceil(3.0 * sigma))
 	size := 2*radius + 1
-	k := make([]float64, size)
-	sum := 0.0
+	k := make([]float32, size)
+	var sum float64
 	for i := range k {
 		x := float64(i - radius)
-		k[i] = math.Exp(-x * x / (2.0 * sigma * sigma))
-		sum += k[i]
+		v := math.Exp(-x * x / (2.0 * sigma * sigma))
+		k[i] = float32(v)
+		sum += v
 	}
+	inv := float32(1.0 / sum)
 	for i := range k {
-		k[i] /= sum
+		k[i] *= inv
 	}
 	return k
 }
 
 // blurH applies a horizontal Gaussian pass: src → dst (same size).
 // Clamps at boundaries.
-func blurH(dst, src []float32, width, height int, k []float64) {
+func blurH(dst, src []float32, width, height int, k []float32) {
 	radius := len(k) / 2
 	for y := range height {
 		srcRow := src[y*width:]
 		dstRow := dst[y*width:]
 		for x := range width {
-			var v float64
+			var v float32
 			for ki, kv := range k {
 				sx := x + ki - radius
 				if sx < 0 {
@@ -139,21 +141,21 @@ func blurH(dst, src []float32, width, height int, k []float64) {
 				} else if sx >= width {
 					sx = width - 1
 				}
-				v += float64(srcRow[sx]) * kv
+				v += srcRow[sx] * kv
 			}
-			dstRow[x] = float32(v)
+			dstRow[x] = v
 		}
 	}
 }
 
 // blurV applies a vertical Gaussian pass: src → dst (same size).
 // Clamps at boundaries.
-func blurV(dst, src []float32, width, height int, k []float64) {
+func blurV(dst, src []float32, width, height int, k []float32) {
 	radius := len(k) / 2
 	for y := range height {
 		dstRow := dst[y*width:]
 		for x := range width {
-			var v float64
+			var v float32
 			for ki, kv := range k {
 				sy := y + ki - radius
 				if sy < 0 {
@@ -161,9 +163,9 @@ func blurV(dst, src []float32, width, height int, k []float64) {
 				} else if sy >= height {
 					sy = height - 1
 				}
-				v += float64(src[sy*width+x]) * kv
+				v += src[sy*width+x] * kv
 			}
-			dstRow[x] = float32(v)
+			dstRow[x] = v
 		}
 	}
 }
