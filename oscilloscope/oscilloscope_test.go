@@ -201,6 +201,118 @@ func TestScopeRender(t *testing.T) {
 	}
 }
 
+// --- Benchmarks ---
+
+func makeSineAudio(n int) [][2]float64 {
+	s := make([][2]float64, n)
+	for i := range s {
+		v := math.Sin(2 * math.Pi * 440 * float64(i) / 44100)
+		s[i] = [2]float64{v, v}
+	}
+	return s
+}
+
+func BenchmarkFeedOctant(b *testing.B) { benchFeed(b, 160, 96) }   // 80-col octant
+func BenchmarkFeedSixelSD(b *testing.B) { benchFeed(b, 640, 480) } // ~640×480 sixel
+func BenchmarkFeedSixelHD(b *testing.B) { benchFeed(b, 1280, 720) } // 720p sixel
+
+func benchFeed(b *testing.B, w, h int) {
+	b.Helper()
+	cfg := DefaultConfig()
+	cfg.SignalGeneratorOn = false
+	scope := New(cfg, 44100)
+	scope.Resize(w, h)
+	audio := makeSineAudio(1024)
+	// warm up phosphor so the first real frames aren't atypical
+	for range 10 {
+		scope.Feed(audio)
+	}
+	b.ResetTimer()
+	for range b.N {
+		scope.Feed(audio)
+	}
+}
+
+func BenchmarkBlurH(b *testing.B) {
+	w, h := 640, 480
+	src := make([]float32, w*h)
+	dst := make([]float32, w*h)
+	for i := range src {
+		src[i] = float32(i % 17)
+	}
+	k := buildGaussianKernel(float64(h) / 7.0) // scatter sigma (worst case)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		blurH(dst, src, w, h, k)
+	}
+}
+
+func BenchmarkBlurV(b *testing.B) {
+	w, h := 640, 480
+	src := make([]float32, w*h)
+	dst := make([]float32, w*h)
+	for i := range src {
+		src[i] = float32(i % 17)
+	}
+	k := buildGaussianKernel(float64(h) / 7.0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		blurV(dst, src, w, h, k)
+	}
+}
+
+func BenchmarkBoxBlurH(b *testing.B) {
+	w, h := 640, 480
+	src := make([]float32, w*h)
+	dst := make([]float32, w*h)
+	for i := range src {
+		src[i] = float32(i % 17)
+	}
+	radii := gaussBoxRadii(float64(h) / 7.0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		boxBlurH(dst, src, w, h, radii[0])
+	}
+}
+
+func BenchmarkBoxBlurV(b *testing.B) {
+	w, h := 640, 480
+	src := make([]float32, w*h)
+	dst := make([]float32, w*h)
+	for i := range src {
+		src[i] = float32(i % 17)
+	}
+	radii := gaussBoxRadii(float64(h) / 7.0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		boxBlurV(dst, src, w, h, radii[0])
+	}
+}
+
+func BenchmarkDrawSegment(b *testing.B) {
+	w, h := 640, 480
+	buf := make([]float32, w*h)
+	sigma := math.Max(float64(h)/200.0, 1.0)
+	b.ResetTimer()
+	for i := range b.N {
+		f := float64(i%100) / 100.0
+		drawSegment(buf, w, h, -0.5+f*0.01, -0.3, -0.5+f*0.01+0.002, -0.3+0.002, 0.8, sigma)
+	}
+}
+
+func BenchmarkUpsample(b *testing.B) {
+	kernel := precomputeKernel(lanczosA, lanczosSteps)
+	audio := makeSineAudio(1024)
+	b.ResetTimer()
+	for range b.N {
+		upsampleWithKernel(audio, kernel, lanczosA, lanczosSteps)
+	}
+}
+
 func TestHSVToRGB(t *testing.T) {
 	tests := []struct {
 		h, s, v    float64

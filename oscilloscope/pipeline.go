@@ -108,23 +108,28 @@ func applyTransforms(samples [][2]float64, cfg Config) [][2]float64 {
 	return out
 }
 
-// computeGlow runs two separable Gaussian blur passes over accumBuf:
+// computeGlow runs two blur passes over accumBuf:
 // a tight pass (narrow beam body) and a scatter pass (wide diffuse halo).
 // Sigmas are chosen so the glow spans multiple terminal character rows at
 // typical terminal resolutions (each char row = 4 pixel rows for octant chars).
 func (s *Scope) computeGlow() {
-	// Tight glow: ~1 pixel row — visible beam body.
+	// Tight glow: exact Gaussian (small kernel, sigma = height/40).
 	tightSigma := math.Max(float64(s.height)/40.0, 1.0)
 	kt := buildGaussianKernel(tightSigma)
 	blurH(s.blurTmp, s.accumBuf, s.width, s.height, kt)
 	blurV(s.tightBuf, s.blurTmp, s.width, s.height, kt)
 
-	// Scatter glow: wide diffuse phosphor halo. Sigma tuned to match reference
-	// glow width (~9% of canvas at 850px → ~7px at 80px height).
+	// Scatter glow: three-pass box blur approximating a Gaussian.
+	// Exact kernel size is O(height); box blur is O(width×height) per pass
+	// regardless of sigma, eliminating the quadratic scaling with canvas size.
 	scatterSigma := math.Max(float64(s.height)/7.0, 2.0)
-	ks := buildGaussianKernel(scatterSigma)
-	blurH(s.blurTmp, s.accumBuf, s.width, s.height, ks)
-	blurV(s.scatterBuf, s.blurTmp, s.width, s.height, ks)
+	sr := gaussBoxRadii(scatterSigma)
+	boxBlurH(s.blurTmp, s.accumBuf, s.width, s.height, sr[0])
+	boxBlurV(s.scatterBuf, s.blurTmp, s.width, s.height, sr[0])
+	boxBlurH(s.blurTmp, s.scatterBuf, s.width, s.height, sr[1])
+	boxBlurV(s.scatterBuf, s.blurTmp, s.width, s.height, sr[1])
+	boxBlurH(s.blurTmp, s.scatterBuf, s.width, s.height, sr[2])
+	boxBlurV(s.scatterBuf, s.blurTmp, s.width, s.height, sr[2])
 }
 
 // toRGBA tone-maps the glow buffers to *image.RGBA, applying CRT phosphor
