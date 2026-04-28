@@ -64,6 +64,7 @@ import (
 	"time"
 
 	"github.com/gordonklaus/portaudio"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 
 	"github.com/reynoldsme/octant"
@@ -179,7 +180,7 @@ func main() {
 	cfg.InvertY = *flagInvertY
 	cfg.FreezeImage = false
 	scope := oscilloscope.New(cfg, sampleRate)
-	scope.Resize(cols*2, rows*4)
+	scope.Resize(scopePixels(fd, *flagSixel, cols, rows))
 
 	// Audio capture channel: non-blocking send drops samples under backpressure.
 	sampleCh := make(chan [][2]float64, 16)
@@ -292,7 +293,7 @@ func main() {
 				cols = *flagCols
 			}
 			if cols > 0 && rows > 0 {
-				scope.Resize(cols*2, rows*4)
+				scope.Resize(scopePixels(fd, *flagSixel, cols, rows))
 			}
 
 		case b, ok := <-keyCh:
@@ -643,6 +644,30 @@ func runHeadless(scope *oscilloscope.Scope, wavPath, pngPath string, useSigGen b
 	}
 	defer out.Close()
 	return png.Encode(out, frame)
+}
+
+// termPixelSize returns the terminal window size in pixels via TIOCGWINSZ.
+// Returns (0, 0) if the ioctl fails or the terminal does not report pixel dims
+// (e.g. a plain VT100 or tmux inner pane).
+func termPixelSize(fd int) (int, int) {
+	ws, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	if err != nil || ws.Xpixel == 0 || ws.Ypixel == 0 {
+		return 0, 0
+	}
+	return int(ws.Xpixel), int(ws.Ypixel)
+}
+
+// scopePixels returns the pixel dimensions to pass to scope.Resize.
+// In sixel mode we use the terminal's actual pixel size so the image fills
+// the window; in octant mode each character cell is 2×4 scope pixels.
+func scopePixels(fd int, useSixel bool, cols, rows int) (int, int) {
+	if useSixel {
+		if pw, ph := termPixelSize(fd); pw > 0 && ph > 0 {
+			return pw, ph
+		}
+		return cols * 8, rows * 16
+	}
+	return cols * 2, rows * 4
 }
 
 // keyReaderFrom spawns a goroutine draining br into a buffered byte channel.
