@@ -9,5 +9,3 @@
 !images/*.png
 .playwright-mcp/
 octant
-octantgore
-
