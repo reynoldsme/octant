@@ -3,8 +3,7 @@
 //
 // The encoder is optimized for oscilloscope-style images: a dark background
 // with a narrow, brightly-colored trace and diffuse glow. It derives a
-// uniform brightness ramp from the dominant non-black hue and uses run-length
-// encoding to keep output compact.
+// uniform brightness ramp from the dominant non-black hue.
 package sixel
 
 import (
@@ -14,6 +13,8 @@ import (
 	"image/color"
 	"io"
 	"math"
+	"runtime"
+	"sync"
 )
 
 // Encoder encodes images to sixel format.
@@ -21,6 +22,10 @@ type Encoder struct {
 	// NumColors is the number of palette entries (max 256). Default 64.
 	NumColors int
 }
+
+// bandBufPool recycles per-band output byte slices across Encode calls to
+// reduce GC pressure in continuous rendering loops.
+var bandBufPool sync.Pool
 
 // Encode writes img to w as a sixel image using default settings.
 func Encode(w io.Writer, img image.Image) error {
@@ -46,14 +51,9 @@ func (e *Encoder) Encode(w io.Writer, img image.Image) error {
 
 	palette := buildPalette(img, numColors)
 
-	// Map every pixel to its nearest palette index.
+	// Map every pixel to its nearest palette index (parallel).
 	mapped := make([]uint8, width*height)
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		row := mapped[(y-bounds.Min.Y)*width:]
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			row[x-bounds.Min.X] = nearestPalette(img.At(x, y), palette)
-		}
-	}
+	mapPixels(img, mapped, palette, width, height, bounds)
 
 	bw := bufio.NewWriterSize(w, 1<<16)
 
@@ -68,63 +68,170 @@ func (e *Encoder) Encode(w io.Writer, img image.Image) error {
 		fmt.Fprintf(bw, "#%d;2;%d;%d;%d", i, r, g, b)
 	}
 
-	// Encode bands of 6 rows.
-	for band := 0; band*6 < height; band++ {
-		y0 := band * 6
+	// Encode bands in parallel, then write in order.
+	numBands := (height + 5) / 6
+	bandBufs := make([][]byte, numBands)
 
-		for ci := range palette {
-			// Skip palette entry 0 (black background): it is the default,
-			// and we can save bytes by never explicitly drawing it.
-			if ci == 0 {
-				continue
-			}
-
-			var wroteAny bool
-			var runCh byte
-			var runLen int
-
-			for x := range width {
-				// Build the 6-bit mask for this column and color.
-				var bits byte
-				for row := range 6 {
-					y := y0 + row
-					if y < height && mapped[y*width+x] == uint8(ci) {
-						bits |= 1 << uint(row)
-					}
-				}
-				ch := byte('?') + bits
-
-				if !wroteAny {
-					fmt.Fprintf(bw, "#%d", ci)
-					runCh = ch
-					runLen = 1
-					wroteAny = true
-				} else if ch == runCh {
-					runLen++
-				} else {
-					writeRun(bw, runCh, runLen)
-					runCh = ch
-					runLen = 1
-				}
-			}
-			if wroteAny {
-				writeRun(bw, runCh, runLen)
-				bw.WriteByte('$') // carriage return: next color starts at x=0
-			}
-		}
-		bw.WriteByte('-') // line feed: advance to next band
+	nw := runtime.NumCPU()
+	if nw > numBands {
+		nw = numBands
 	}
+	jobs := make(chan int, numBands)
+	for b := range numBands {
+		jobs <- b
+	}
+	close(jobs)
 
+	var wg sync.WaitGroup
+	for range nw {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nc := len(palette)
+			bandBits := make([]byte, nc*width)
+			hasColor := make([]bool, nc)
+			for band := range jobs {
+				bandBufs[band] = encodeBand(band, mapped, palette, width, height, bandBits, hasColor)
+			}
+		}()
+	}
+	wg.Wait()
+
+	for _, buf := range bandBufs {
+		bw.Write(buf)
+		bandBufPool.Put(buf[:0])
+	}
 	bw.WriteString("\x1b\\") // string terminator
 	return bw.Flush()
 }
 
-func writeRun(w *bufio.Writer, ch byte, count int) {
-	if count == 1 {
-		w.WriteByte(ch)
-	} else {
-		fmt.Fprintf(w, "!%d%c", count, ch)
+// mapPixels maps every pixel to its nearest palette index in parallel.
+// It has a fast path for *image.RGBA that avoids interface dispatch.
+func mapPixels(img image.Image, mapped []uint8, palette []color.RGBA, width, height int, bounds image.Rectangle) {
+	nw := runtime.NumCPU()
+	if nw > height {
+		nw = height
 	}
+	rowsPerWorker := (height + nw - 1) / nw
+
+	var wg sync.WaitGroup
+	switch src := img.(type) {
+	case *image.RGBA:
+		scale := float64(len(palette)-1) / 255.0
+		maxIdx := len(palette) - 1
+		xOff := (bounds.Min.X - src.Rect.Min.X) * 4
+		for w := range nw {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				yStart := id * rowsPerWorker
+				yEnd := min(yStart+rowsPerWorker, height)
+				for y := yStart; y < yEnd; y++ {
+					dst := mapped[y*width : y*width+width]
+					srcRow := (bounds.Min.Y + y - src.Rect.Min.Y) * src.Stride
+					for x := range width {
+						p := src.Pix[srcRow+xOff+x*4:]
+						lum := 0.2126*float64(p[0]) + 0.7152*float64(p[1]) + 0.0722*float64(p[2])
+						idx := int(lum*scale + 0.5)
+						if idx > maxIdx {
+							idx = maxIdx
+						}
+						dst[x] = uint8(idx)
+					}
+				}
+			}(w)
+		}
+	default:
+		for w := range nw {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				yStart := id * rowsPerWorker
+				yEnd := min(yStart+rowsPerWorker, height)
+				for y := yStart; y < yEnd; y++ {
+					dst := mapped[y*width : y*width+width]
+					for x := range width {
+						dst[x] = nearestPalette(img.At(x+bounds.Min.X, y+bounds.Min.Y), palette)
+					}
+				}
+			}(w)
+		}
+	}
+	wg.Wait()
+}
+
+// encodeBand encodes one sixel band (6 rows) into a fresh []byte.
+// bandBits and hasColor are per-worker scratch buffers cleared on entry.
+//
+// Instead of iterating numColors×width×6 (checking each color at each
+// pixel), we do a single row-major pass over mapped to build bandBits,
+// then one pass per present color to emit. For 64 colors this is ~5× fewer
+// inner iterations.
+func encodeBand(band int, mapped []uint8, palette []color.RGBA, width, height int, bandBits []byte, hasColor []bool) []byte {
+	y0 := band * 6
+	nc := len(palette)
+
+	clear(bandBits[:nc*width])
+	clear(hasColor[:nc])
+
+	// Build sixel bit masks in row-major order (good cache locality).
+	for row := range 6 {
+		y := y0 + row
+		if y >= height {
+			break
+		}
+		bit := byte(1 << uint(row))
+		rowBase := y * width
+		for x := range width {
+			ci := int(mapped[rowBase+x])
+			bandBits[ci*width+x] |= bit
+			hasColor[ci] = true
+		}
+	}
+
+	// Emit: skip palette[0] (black background — implicit default).
+	need := nc * width
+	var buf []byte
+	if v := bandBufPool.Get(); v != nil {
+		buf = v.([]byte)
+		if cap(buf) < need {
+			buf = make([]byte, 0, need)
+		}
+	} else {
+		buf = make([]byte, 0, need)
+	}
+	for ci := 1; ci < nc; ci++ {
+		if !hasColor[ci] {
+			continue
+		}
+		buf = appendUint(buf, '#', ci)
+		off := ci * width
+		base := len(buf)
+		buf = append(buf, bandBits[off:off+width]...)
+		for i := range width {
+			buf[base+i] += '?'
+		}
+		buf = append(buf, '$') // carriage return: next color starts at x=0
+	}
+	buf = append(buf, '-') // line feed: advance to next band
+	return buf
+}
+
+// appendUint appends prefix then the decimal representation of n to buf.
+func appendUint(buf []byte, prefix byte, n int) []byte {
+	buf = append(buf, prefix)
+	if n < 10 {
+		return append(buf, byte('0'+n))
+	}
+	start := len(buf)
+	for n > 0 {
+		buf = append(buf, byte('0'+n%10))
+		n /= 10
+	}
+	for i, j := start, len(buf)-1; i < j; i, j = i+1, j-1 {
+		buf[i], buf[j] = buf[j], buf[i]
+	}
+	return buf
 }
 
 // buildPalette creates a brightness ramp from black to the dominant hue.
@@ -132,29 +239,48 @@ func writeRun(w *bufio.Writer, ch byte, count int) {
 // one hue family.
 func buildPalette(img image.Image, numColors int) []color.RGBA {
 	bounds := img.Bounds()
+	width := bounds.Dx()
 
 	// Sample the image to find the luminance-weighted average non-dark color.
 	var rSum, gSum, bSum, wSum float64
 	step := 1
-	total := bounds.Dx() * bounds.Dy()
+	total := width * bounds.Dy()
 	if total > 20000 {
 		step = total / 20000
 	}
-	n := 0
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x += step {
-			r, g, b, _ := img.At(x, y).RGBA()
-			rf := float64(r >> 8)
-			gf := float64(g >> 8)
-			bf := float64(b >> 8)
-			lum := 0.2126*rf + 0.7152*gf + 0.0722*bf
-			if lum > 10 {
-				rSum += rf * lum
-				gSum += gf * lum
-				bSum += bf * lum
-				wSum += lum
+
+	switch src := img.(type) {
+	case *image.RGBA:
+		xOff := (bounds.Min.X - src.Rect.Min.X) * 4
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			rowOff := (y-src.Rect.Min.Y)*src.Stride + xOff
+			for x := 0; x < width; x += step {
+				p := src.Pix[rowOff+x*4:]
+				rf, gf, bf := float64(p[0]), float64(p[1]), float64(p[2])
+				lum := 0.2126*rf + 0.7152*gf + 0.0722*bf
+				if lum > 10 {
+					rSum += rf * lum
+					gSum += gf * lum
+					bSum += bf * lum
+					wSum += lum
+				}
 			}
-			n++
+		}
+	default:
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x += step {
+				r, g, b, _ := img.At(x, y).RGBA()
+				rf := float64(r >> 8)
+				gf := float64(g >> 8)
+				bf := float64(b >> 8)
+				lum := 0.2126*rf + 0.7152*gf + 0.0722*bf
+				if lum > 10 {
+					rSum += rf * lum
+					gSum += gf * lum
+					bSum += bf * lum
+					wSum += lum
+				}
+			}
 		}
 	}
 
