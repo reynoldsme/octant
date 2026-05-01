@@ -1,7 +1,8 @@
 // Command octantscope is a terminal oscilloscope based on
 // https://dood.al/oscilloscope/, rendered using Unicode octant block
 // characters with 24-bit ANSI color. An optional --sixel flag uses the
-// DEC sixel protocol instead for pixel-exact output.
+// DEC sixel protocol instead for pixel-exact output, and --kitty uses the
+// Kitty Graphics Protocol.
 //
 // On startup, an interactive menu lists available audio input devices and
 // PulseAudio output monitors (for capturing playback audio). Pass --siggen
@@ -28,6 +29,7 @@
 //	--no-filter       Disable Lanczos upsampling
 //	--mono            Monochrome octant output
 //	--sixel           Sixel output mode
+//	--kitty           Kitty Graphics Protocol output mode
 //	--x-expr string   Signal generator X expression
 //	--y-expr string   Signal generator Y expression
 //	--a float         Signal generator 'a' parameter (default 3)
@@ -68,6 +70,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/reynoldsme/octant"
+	"github.com/reynoldsme/octant/kitty"
 	"github.com/reynoldsme/octant/oscilloscope"
 	"github.com/reynoldsme/octant/sixel"
 )
@@ -89,6 +92,7 @@ var (
 	flagNoFilter    = flag.Bool("no-filter", false, "disable Lanczos upsampling")
 	flagMono        = flag.Bool("mono", false, "monochrome octant output")
 	flagSixel       = flag.Bool("sixel", false, "sixel output mode")
+	flagKitty       = flag.Bool("kitty", false, "kitty graphics protocol output mode")
 	flagXExpr       = flag.String("x-expr", "sin(2*PI*a*t)*cos(2*PI*b*t)", "signal generator X expression")
 	flagYExpr       = flag.String("y-expr", "cos(2*PI*a*t)*cos(2*PI*b*t)", "signal generator Y expression")
 	flagA           = flag.Float64("a", 3.0, "signal generator 'a' parameter (0.5-5)")
@@ -180,7 +184,7 @@ func main() {
 	cfg.InvertY = *flagInvertY
 	cfg.FreezeImage = false
 	scope := oscilloscope.New(cfg, sampleRate)
-	scope.Resize(scopePixels(fd, *flagSixel, cols, rows))
+	scope.Resize(scopePixels(fd, *flagSixel || *flagKitty, cols, rows))
 
 	// Audio capture channel: non-blocking send drops samples under backpressure.
 	sampleCh := make(chan [][2]float64, 16)
@@ -245,13 +249,14 @@ func main() {
 	keyCh := keyReaderFrom(stdinBR)
 
 	var term_ *octant.Terminal
-	if !*flagSixel {
+	if !*flagSixel && !*flagKitty {
 		term_ = &octant.Terminal{W: os.Stdout, Mono: *flagMono}
 		if *flagCols > 0 {
 			term_.MaxCols = *flagCols
 		}
 	}
 	sixelEnc := &sixel.Encoder{NumColors: 64}
+	kittyEnc := &kitty.Encoder{}
 
 	ticker := time.NewTicker(33 * time.Millisecond) // ~30 fps
 	defer ticker.Stop()
@@ -279,10 +284,14 @@ func main() {
 				continue
 			}
 
-			if *flagSixel {
+			switch {
+			case *flagSixel:
 				os.Stdout.WriteString("\x1b[H")
 				sixelEnc.Encode(os.Stdout, frame)
-			} else {
+			case *flagKitty:
+				os.Stdout.WriteString("\x1b[H")
+				kittyEnc.Encode(os.Stdout, frame)
+			default:
 				term_.DrawFrame(frame)
 			}
 			drawOverlay(os.Stdout, cfg, rows)
@@ -293,7 +302,7 @@ func main() {
 				cols = *flagCols
 			}
 			if cols > 0 && rows > 0 {
-				scope.Resize(scopePixels(fd, *flagSixel, cols, rows))
+				scope.Resize(scopePixels(fd, *flagSixel || *flagKitty, cols, rows))
 			}
 
 		case b, ok := <-keyCh:
