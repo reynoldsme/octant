@@ -17,14 +17,29 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AndreRenaud/gore"
 	"golang.org/x/term"
 
 	"github.com/reynoldsme/octant"
+)
+
+// Kitty keyboard protocol flags.
+// https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+const (
+	kittyDisambiguate = 1 // report formerly-ambiguous keys (ESC, Enter, Tab) as CSI u
+	kittyEventTypes   = 2 // include press/repeat/release event type in CSI sequences
+)
+
+const (
+	kittyPress   = 1
+	kittyRepeat  = 2
+	kittyRelease = 3
 )
 
 // octantFrontend implements gore.DoomFrontend using octant block rendering.
@@ -34,6 +49,7 @@ type octantFrontend struct {
 	octant.Terminal
 
 	keys            <-chan byte
+	kittyEnabled    bool
 	outstandingDown map[uint8]time.Time
 }
 
@@ -45,13 +61,17 @@ func (f *octantFrontend) CacheSound(name string, data []byte) {}
 
 func (f *octantFrontend) PlaySound(name string, channel, vol, sep int) {}
 
-// GetEvent polls for the next keyboard event, synthesising key-up events
-// 60 ms after each key-down (terminals do not send key-up signals).
+// GetEvent polls for the next keyboard event.
+//
+// In Kitty mode, CSI-reported keys (arrows, ESC, Enter, Tab) carry real
+// key-up events from the terminal; bare ASCII (a-z, 0-9, etc.) still uses
+// the 60 ms synthesised-up fallback. In legacy mode every key uses the
+// synthesised fallback.
 func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
 	const upDelay = 60 * time.Millisecond
 	now := time.Now()
 
-	// Emit any pending key-ups whose delay has elapsed.
+	// Emit any pending synthesised key-ups whose delay has elapsed.
 	for k, ts := range f.outstandingDown {
 		if now.Sub(ts) >= upDelay {
 			delete(f.outstandingDown, k)
@@ -67,7 +87,10 @@ func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
 		if !ok {
 			return false
 		}
-		// Accumulate an escape sequence (e.g. arrow keys: ESC [ A).
+		if f.kittyEnabled {
+			return f.handleKittyByte(b, ev, now)
+		}
+		// Legacy: accumulate up to 3-byte ESC sequence non-blocking.
 		seq := []byte{b}
 		if b == 0x1b {
 			select {
@@ -93,7 +116,159 @@ func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
 	}
 }
 
-// mapKey translates a raw byte sequence to a DOOM key code.
+// handleKittyByte dispatches one byte in Kitty keyboard protocol mode.
+func (f *octantFrontend) handleKittyByte(b byte, ev *gore.DoomEvent, now time.Time) bool {
+	if b != 0x1b {
+		// Bare ASCII (printable keys): key-down only; synthesise key-up via timer.
+		k, ok := mapBareByte(b)
+		if !ok {
+			return false
+		}
+		ev.Type = gore.Ev_keydown
+		ev.Key = k
+		f.outstandingDown[k] = now
+		return true
+	}
+	// Start of an escape sequence: drain the rest of the CSI.
+	params, final, ok := drainCSI(f.keys)
+	if !ok {
+		return false
+	}
+	return parseKittyCSI(params, final, ev)
+}
+
+// drainCSI reads the remainder of a CSI sequence from ch after the leading ESC
+// has been consumed. It expects '[' next, then parameter bytes, then a final
+// byte in [0x40, 0x7E]. Non-blocking: returns false if the channel stalls.
+func drainCSI(ch <-chan byte) (params []byte, final byte, ok bool) {
+	nb := func() (byte, bool) {
+		select {
+		case b := <-ch:
+			return b, true
+		default:
+			return 0, false
+		}
+	}
+
+	// First byte after ESC must be '[' (CSI introducer).
+	b, got := nb()
+	if !got || b != '[' {
+		return nil, 0, false
+	}
+
+	for {
+		b, got = nb()
+		if !got {
+			return nil, 0, false
+		}
+		if b >= 0x40 && b <= 0x7E {
+			return params, b, true
+		}
+		params = append(params, b)
+	}
+}
+
+// parseKittyCSI interprets a CSI sequence under the Kitty keyboard protocol.
+// params are the bytes between CSI and final; final is the terminating byte.
+func parseKittyCSI(params []byte, final byte, ev *gore.DoomEvent) bool {
+	parts := strings.Split(string(params), ";")
+
+	// Third field (index 2) carries the event type; default is press.
+	eventType := kittyPress
+	if len(parts) >= 3 {
+		if n, err := strconv.Atoi(parts[2]); err == nil {
+			eventType = n
+		}
+	}
+	isDown := eventType != kittyRelease
+
+	var k uint8
+	var mapped bool
+
+	switch final {
+	case 'u': // CSI u — Kitty format: code ; mods ; event_type u
+		code := 0
+		if len(parts) >= 1 {
+			if n, err := strconv.Atoi(parts[0]); err == nil {
+				code = n
+			}
+		}
+		k, mapped = mapKittyCode(code)
+
+	case 'A':
+		k, mapped = gore.KEY_UPARROW1, true
+	case 'B':
+		k, mapped = gore.KEY_DOWNARROW1, true
+	case 'C':
+		k, mapped = gore.KEY_RIGHTARROW1, true
+	case 'D':
+		k, mapped = gore.KEY_LEFTARROW1, true
+	}
+
+	if !mapped {
+		return false
+	}
+	if isDown {
+		ev.Type = gore.Ev_keydown
+	} else {
+		ev.Type = gore.Ev_keyup
+	}
+	ev.Key = k
+	return true
+}
+
+// mapKittyCode maps a Unicode codepoint from the Kitty protocol to a DOOM key.
+func mapKittyCode(code int) (uint8, bool) {
+	switch code {
+	case 27:
+		return gore.KEY_ESCAPE, true
+	case 13:
+		return gore.KEY_ENTER, true
+	case 9:
+		return gore.KEY_TAB, true
+	case 32:
+		return gore.KEY_USE1, true
+	case ',':
+		return gore.KEY_FIRE1, true
+	}
+	if code >= '0' && code <= '9' {
+		return uint8(code), true
+	}
+	if code >= 'A' && code <= 'Z' {
+		return uint8(code-'A') + 'a', true
+	}
+	if code >= 'a' && code <= 'z' {
+		return uint8(code), true
+	}
+	return 0, false
+}
+
+// mapBareByte maps a non-ESC ASCII byte to a DOOM key in Kitty mode.
+// Kitty still delivers unambiguous printable keys as bare bytes.
+func mapBareByte(b byte) (uint8, bool) {
+	switch b {
+	case '\r', '\n':
+		return gore.KEY_ENTER, true
+	case '\t':
+		return gore.KEY_TAB, true
+	case ' ':
+		return gore.KEY_USE1, true
+	case ',':
+		return gore.KEY_FIRE1, true
+	}
+	if b >= '0' && b <= '9' {
+		return b, true
+	}
+	if b >= 'A' && b <= 'Z' {
+		return b - 'A' + 'a', true
+	}
+	if b >= 'a' && b <= 'z' {
+		return b, true
+	}
+	return 0, false
+}
+
+// mapKey translates a raw byte sequence to a DOOM key code (legacy mode).
 func mapKey(seq []byte) (uint8, bool) {
 	switch string(seq) {
 	case "\x1b[A":
@@ -130,11 +305,10 @@ func mapKey(seq []byte) (uint8, bool) {
 	return 0, false
 }
 
-// keyReader spawns a goroutine that continuously reads bytes from r into a
+// keyReader spawns a goroutine that continuously reads bytes from br into a
 // buffered channel, enabling non-blocking reads in GetEvent.
-func keyReader(r io.Reader) <-chan byte {
+func keyReader(br *bufio.Reader) <-chan byte {
 	ch := make(chan byte, 128)
-	br := bufio.NewReader(r)
 	go func() {
 		defer close(ch)
 		for {
@@ -146,6 +320,65 @@ func keyReader(r io.Reader) <-chan byte {
 		}
 	}()
 	return ch
+}
+
+// stdinReady reports whether os.Stdin has data to read within d.
+// Uses syscall.Select so it does not consume any bytes.
+func stdinReady(d time.Duration) bool {
+	fd := int(os.Stdin.Fd())
+	var fds syscall.FdSet
+	fds.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	tv := syscall.NsecToTimeval(d.Nanoseconds())
+	n, err := syscall.Select(fd+1, &fds, nil, nil, &tv)
+	return n > 0 && err == nil
+}
+
+// tryEnableKitty sends the Kitty keyboard protocol query and, if the terminal
+// responds, pushes our flag set. Must be called after entering raw mode and
+// before starting the keyReader goroutine. Returns true when enabled.
+func tryEnableKitty(br *bufio.Reader) bool {
+	fmt.Fprint(os.Stdout, "\x1b[?u")
+
+	// Wait up to 100 ms for the first response byte.
+	if !stdinReady(100 * time.Millisecond) {
+		return false
+	}
+
+	// All response bytes arrive atomically; read them from the buffer directly.
+	read := func() (byte, bool) {
+		b, err := br.ReadByte()
+		return b, err == nil
+	}
+
+	// Expected response: ESC [ ? {digits} u
+	b, ok := read()
+	if !ok || b != 0x1b {
+		return false
+	}
+	b, ok = read()
+	if !ok || b != '[' {
+		return false
+	}
+	b, ok = read()
+	if !ok || b != '?' {
+		return false
+	}
+	for {
+		b, ok = read()
+		if !ok {
+			return false
+		}
+		if b == 'u' {
+			break
+		}
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+
+	// Push current flags and enable ours.
+	fmt.Fprintf(os.Stdout, "\x1b[>%du", kittyDisambiguate|kittyEventTypes)
+	return true
 }
 
 func main() {
@@ -173,9 +406,18 @@ func main() {
 	fmt.Print("\x1b[2J\x1b[H\x1b[?25l")
 	defer fmt.Print("\x1b[0m\x1b[?25h")
 
+	// Detect and enable Kitty keyboard protocol before starting the reader
+	// goroutine (both use the same bufio.Reader; only one goroutine may read).
+	br := bufio.NewReader(os.Stdin)
+	kittyEnabled := tryEnableKitty(br)
+	if kittyEnabled {
+		defer fmt.Fprint(os.Stdout, "\x1b[<1u")
+	}
+
 	f := &octantFrontend{
 		Terminal:        octant.Terminal{W: os.Stdout},
-		keys:            keyReader(os.Stdin),
+		keys:            keyReader(br),
+		kittyEnabled:    kittyEnabled,
 		outstandingDown: make(map[uint8]time.Time),
 	}
 	gore.Run(f, args)
