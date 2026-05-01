@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"image"
 	"os"
 	"strconv"
 	"strings"
@@ -43,12 +44,14 @@ const (
 )
 
 // octantFrontend implements gore.DoomFrontend using octant block rendering.
-// DrawFrame is promoted from the embedded octant.Terminal, which overwrites
-// the previous frame in place via ANSI cursor-up sequences.
 // CacheSound and PlaySound are promoted from the embedded *soundSystem.
+// DrawFrame is overridden to poll for music changes before delegating to
+// octant.Terminal, which overwrites the previous frame in place via ANSI
+// cursor-up sequences.
 type octantFrontend struct {
 	octant.Terminal
 	*soundSystem
+	music *musicSystem
 
 	keys            <-chan byte
 	kittyEnabled    bool
@@ -57,6 +60,11 @@ type octantFrontend struct {
 
 func (f *octantFrontend) SetTitle(title string) {
 	fmt.Fprintf(os.Stdout, "\x1b]0;%s\x07", title)
+}
+
+func (f *octantFrontend) DrawFrame(frame *image.RGBA) {
+	f.music.poll()
+	f.Terminal.DrawFrame(frame)
 }
 
 // GetEvent polls for the next keyboard event.
@@ -380,13 +388,15 @@ func tryEnableKitty(br *bufio.Reader) bool {
 }
 
 func main() {
+	// Strip -soundfont from args manually so gore receives its flags intact.
+	soundfont, args := extractFlag(os.Args[1:], "soundfont")
+
 	// Validate arguments before touching the terminal: gore.Run does not
 	// return an error, so any WAD problem produces garbled output inside the
 	// raw/cleared terminal with no way to exit cleanly.
-	args := os.Args[1:]
 	if err := checkWAD(args); err != nil {
 		fmt.Fprintf(os.Stderr, "octantgore: %v\n", err)
-		fmt.Fprintln(os.Stderr, "usage: octantgore -iwad <doom.wad>")
+		fmt.Fprintln(os.Stderr, "usage: octantgore [-soundfont <file.sf2>] -iwad <doom.wad>")
 		os.Exit(1)
 	}
 
@@ -412,17 +422,48 @@ func main() {
 		defer fmt.Fprint(os.Stdout, "\x1b[<1u")
 	}
 
-	sound := newSoundSystem()
+	otoCtx := newAudioContext()
+	sound := newSoundSystem(otoCtx)
 	defer sound.close()
+	music := newMusicSystem(otoCtx, soundfont)
+	defer music.close()
 
 	f := &octantFrontend{
 		Terminal:        octant.Terminal{W: os.Stdout},
 		soundSystem:     sound,
+		music:           music,
 		keys:            keyReader(br),
 		kittyEnabled:    kittyEnabled,
 		outstandingDown: make(map[uint8]time.Time),
 	}
 	gore.Run(f, args)
+}
+
+// extractFlag removes -name / --name (with a following value) or
+// -name=value / --name=value from args and returns the value and the
+// remaining slice. All other flags are passed through untouched so that
+// gore can handle them itself.
+func extractFlag(args []string, name string) (value string, remaining []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-"+name || a == "--"+name {
+			if i+1 < len(args) {
+				value = args[i+1]
+				i++
+			}
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "-"+name+"="); ok {
+			value = v
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "--"+name+"="); ok {
+			value = v
+			continue
+		}
+		remaining = append(remaining, a)
+	}
+	return value, remaining
 }
 
 // checkWAD verifies that a -iwad argument is present and the file exists.
