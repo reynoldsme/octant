@@ -45,8 +45,10 @@ const (
 // octantFrontend implements gore.DoomFrontend using octant block rendering.
 // DrawFrame is promoted from the embedded octant.Terminal, which overwrites
 // the previous frame in place via ANSI cursor-up sequences.
+// CacheSound and PlaySound are promoted from the embedded *soundSystem.
 type octantFrontend struct {
 	octant.Terminal
+	*soundSystem
 
 	keys            <-chan byte
 	kittyEnabled    bool
@@ -56,10 +58,6 @@ type octantFrontend struct {
 func (f *octantFrontend) SetTitle(title string) {
 	fmt.Fprintf(os.Stdout, "\x1b]0;%s\x07", title)
 }
-
-func (f *octantFrontend) CacheSound(name string, data []byte) {}
-
-func (f *octantFrontend) PlaySound(name string, channel, vol, sep int) {}
 
 // GetEvent polls for the next keyboard event.
 //
@@ -414,8 +412,12 @@ func main() {
 		defer fmt.Fprint(os.Stdout, "\x1b[<1u")
 	}
 
+	sound := newSoundSystem()
+	defer sound.close()
+
 	f := &octantFrontend{
 		Terminal:        octant.Terminal{W: os.Stdout},
+		soundSystem:     sound,
 		keys:            keyReader(br),
 		kittyEnabled:    kittyEnabled,
 		outstandingDown: make(map[uint8]time.Time),
