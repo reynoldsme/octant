@@ -334,14 +334,14 @@ func Scale(img image.Image, maxCols int) image.Image {
 			for sy := y0; sy < y1; sy++ {
 				for sx := x0; sx < x1; sx++ {
 					r, g, b, _ := img.At(bounds.Min.X+sx, bounds.Min.Y+sy).RGBA()
-					rSum += float64(r >> 8)
-					gSum += float64(g >> 8)
-					bSum += float64(b >> 8)
+					rSum += srgbLinLUT[r>>8]
+					gSum += srgbLinLUT[g>>8]
+					bSum += srgbLinLUT[b>>8]
 					n++
 				}
 			}
 			dst.Set(x, y, color.RGBA{
-				R: uint8(rSum / n), G: uint8(gSum / n), B: uint8(bSum / n), A: 255,
+				R: linToSRGB8(rSum / n), G: linToSRGB8(gSum / n), B: linToSRGB8(bSum / n), A: 255,
 			})
 		}
 	}
