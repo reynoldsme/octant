@@ -35,6 +35,7 @@ import (
 const (
 	kittyDisambiguate = 1 // report formerly-ambiguous keys (ESC, Enter, Tab) as CSI u
 	kittyEventTypes   = 2 // include press/repeat/release event type in CSI sequences
+	kittyReportAll    = 8 // send ALL keys as CSI u — no bare-byte text for printable keys
 )
 
 const (
@@ -56,6 +57,13 @@ type octantFrontend struct {
 	keys            <-chan byte
 	kittyEnabled    bool
 	outstandingDown map[uint8]time.Time
+	debugLog        *os.File // non-nil when OCTANT_DEBUG_KEYS is set
+}
+
+func (f *octantFrontend) dbg(format string, args ...any) {
+	if f.debugLog != nil {
+		fmt.Fprintf(f.debugLog, format+"\n", args...)
+	}
 }
 
 func (f *octantFrontend) SetTitle(title string) {
@@ -69,12 +77,15 @@ func (f *octantFrontend) DrawFrame(frame *image.RGBA) {
 
 // GetEvent polls for the next keyboard event.
 //
-// In Kitty mode, CSI-reported keys (arrows, ESC, Enter, Tab) carry real
-// key-up events from the terminal; bare ASCII (a-z, 0-9, etc.) still uses
-// the 60 ms synthesised-up fallback. In legacy mode every key uses the
-// synthesised fallback.
+// In Kitty mode, CSI-reported keys carry real key-up events; outstandingDown
+// acts only as a safety-net fallback with a generous timeout so it doesn't
+// fire prematurely during the terminal's initial key-repeat delay (~200 ms).
+// In legacy mode every key uses the synthesised-up fallback with a tight timeout.
 func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
-	const upDelay = 60 * time.Millisecond
+	upDelay := 60 * time.Millisecond
+	if f.kittyEnabled {
+		upDelay = 1 * time.Second
+	}
 	now := time.Now()
 
 	// Emit any pending synthesised key-ups whose delay has elapsed.
@@ -83,6 +94,7 @@ func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
 			delete(f.outstandingDown, k)
 			ev.Type = gore.Ev_keyup
 			ev.Key = k
+			f.dbg("synth-up key=0x%02x %q (held %v)", k, k, now.Sub(ts).Round(time.Millisecond))
 			return true
 		}
 	}
@@ -123,9 +135,13 @@ func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
 }
 
 // handleKittyByte dispatches one byte in Kitty keyboard protocol mode.
+// With kittyReportAll enabled the terminal sends all keys as CSI sequences; the
+// bare-byte path below is a fallback for terminals that honour only a subset of
+// the Kitty flags.
 func (f *octantFrontend) handleKittyByte(b byte, ev *gore.DoomEvent, now time.Time) bool {
 	if b != 0x1b {
-		// Bare ASCII (printable keys): key-down only; synthesise key-up via timer.
+		// Bare ASCII — only reached when kittyReportAll is not honoured.
+		f.dbg("bare byte=0x%02x %q", b, b)
 		k, ok := mapBareByte(b)
 		if !ok {
 			return false
@@ -138,9 +154,24 @@ func (f *octantFrontend) handleKittyByte(b byte, ev *gore.DoomEvent, now time.Ti
 	// Start of an escape sequence: drain the rest of the CSI.
 	params, final, ok := drainCSI(f.keys)
 	if !ok {
+		f.dbg("drainCSI failed after ESC")
 		return false
 	}
-	return parseKittyCSI(params, final, ev)
+	f.dbg("CSI params=%q final=%q", params, final)
+	if !parseKittyCSI(params, final, ev) {
+		return false
+	}
+	// Sync outstandingDown with real Kitty events so the synthesised fallback
+	// doesn't double-fire. Release cancels the entry; press/repeat resets the
+	// timer (extends the window past the terminal's initial-repeat delay).
+	if ev.Type == gore.Ev_keyup {
+		f.dbg("keyup  key=0x%02x %q (real CSI release)", ev.Key, ev.Key)
+		delete(f.outstandingDown, ev.Key)
+	} else {
+		f.dbg("keydown key=0x%02x %q (CSI press/repeat)", ev.Key, ev.Key)
+		f.outstandingDown[ev.Key] = now
+	}
+	return true
 }
 
 // drainCSI reads the remainder of a CSI sequence from ch after the leading ESC
@@ -383,7 +414,10 @@ func tryEnableKitty(br *bufio.Reader) bool {
 	}
 
 	// Push current flags and enable ours.
-	fmt.Fprintf(os.Stdout, "\x1b[>%du", kittyDisambiguate|kittyEventTypes)
+	// kittyReportAll (8) tells the terminal to send every key as a CSI u sequence
+	// rather than as bare text, which prevents the terminal from sending both a
+	// bare byte AND a CSI press event for the same keystroke.
+	fmt.Fprintf(os.Stdout, "\x1b[>%du", kittyDisambiguate|kittyEventTypes|kittyReportAll)
 	return true
 }
 
@@ -428,6 +462,17 @@ func main() {
 	music := newMusicSystem(otoCtx, soundfont)
 	defer music.close()
 
+	var debugLog *os.File
+	if path := os.Getenv("OCTANT_DEBUG_KEYS"); path != "" {
+		if path == "1" {
+			path = "/tmp/octantgore-keys.log"
+		}
+		debugLog, _ = os.Create(path)
+		if debugLog != nil {
+			defer debugLog.Close()
+		}
+	}
+
 	f := &octantFrontend{
 		Terminal:        octant.Terminal{W: os.Stdout},
 		soundSystem:     sound,
@@ -435,6 +480,7 @@ func main() {
 		keys:            keyReader(br),
 		kittyEnabled:    kittyEnabled,
 		outstandingDown: make(map[uint8]time.Time),
+		debugLog:        debugLog,
 	}
 	gore.Run(f, args)
 }
