@@ -128,12 +128,17 @@ type Terminal struct {
 	// 2 pixels wide). 0 auto-detects from W when W is an *os.File, falling
 	// back to os.Stdout.
 	MaxCols int
+	// MaxRows is the maximum output height in terminal rows (each row is
+	// 4 pixels tall). 0 auto-detects from W when W is an *os.File, falling
+	// back to os.Stdout.
+	MaxRows int
 	// Mono selects monochrome (1-bit dithered) output instead of full color.
 	Mono bool
 }
 
 // DrawFrame renders img to t.W, overwriting the previous frame if one has
-// already been written. The image is scaled to fit MaxCols columns.
+// already been written. The image is scaled to fit within MaxCols columns and
+// MaxRows rows, whichever is more restrictive, preserving aspect ratio.
 //
 // Output uses \r\n line endings so that the frame renders correctly in raw
 // terminal mode (where OPOST/ONLCR is disabled and bare \n does not return
@@ -146,7 +151,8 @@ func (t *Terminal) DrawFrame(img *image.RGBA) {
 	if w == nil {
 		w = os.Stdout
 	}
-	scaled := Scale(img, t.maxCols(w))
+	cols, rows := t.TermConstraints()
+	scaled := Scale(img, cols, rows)
 	var buf bytes.Buffer
 	if t.Mono {
 		RenderMono(scaled, &buf)
@@ -157,29 +163,47 @@ func (t *Terminal) DrawFrame(img *image.RGBA) {
 	// only moves the cursor down without returning to column 0. \r\n is safe in
 	// both raw and cooked modes.
 	out := bytes.ReplaceAll(buf.Bytes(), []byte("\n"), []byte("\r\n"))
+	// Drop the trailing \r\n so the cursor stays on the last row instead of
+	// advancing past it. Without this, writing a frame that fills the terminal
+	// exactly causes the terminal to scroll, pushing the first row off screen.
+	out = bytes.TrimSuffix(out, []byte("\r\n"))
 	fmt.Fprintf(w, "\x1b[H")
 	w.Write(out)
 }
 
-// maxCols resolves the effective column limit for writer w.
-func (t *Terminal) maxCols(w io.Writer) int {
-	if t.MaxCols > 0 {
-		return t.MaxCols
+// TermConstraints resolves the effective column and row limits for t.W
+// (falling back to os.Stdout). It returns the same values that DrawFrame uses
+// when scaling, so callers that need to know the output dimensions before
+// rendering can query them without re-implementing the MaxCols/MaxRows logic.
+func (t *Terminal) TermConstraints() (cols, rows int) {
+	w := t.W
+	if w == nil {
+		w = os.Stdout
 	}
-	return writerTermWidth(w)
+	cols, rows = t.MaxCols, t.MaxRows
+	if cols == 0 || rows == 0 {
+		c, r := writerTermSize(w)
+		if cols == 0 {
+			cols = c
+		}
+		if rows == 0 {
+			rows = r
+		}
+	}
+	return
 }
 
-// writerTermWidth returns the terminal width of w if it is an *os.File,
-// otherwise falls back to os.Stdout, returning 0 if neither works.
-func writerTermWidth(w io.Writer) int {
+// writerTermSize returns the terminal dimensions of w if it is an *os.File,
+// otherwise falls back to os.Stdout, returning (0, 0) if neither works.
+func writerTermSize(w io.Writer) (int, int) {
 	for _, f := range []*os.File{toFile(w), os.Stdout} {
 		if f != nil {
-			if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 {
-				return width
+			if cols, rows, err := term.GetSize(int(f.Fd())); err == nil && cols > 0 {
+				return cols, rows
 			}
 		}
 	}
-	return 0
+	return 0, 0
 }
 
 func toFile(w io.Writer) *os.File {
@@ -290,22 +314,36 @@ func nearestLinRGB(p linRGB, palette []linRGB) int {
 	return best
 }
 
-// Scale resizes img proportionally so its width fits within maxCols terminal
-// columns (each column is 2 source pixels wide). When maxCols is 0 the width
-// is auto-detected from os.Stdout; if that fails img is returned unchanged.
-func Scale(img image.Image, maxCols int) image.Image {
-	if maxCols == 0 {
-		maxCols = writerTermWidth(os.Stdout)
-		if maxCols == 0 {
+// Scale resizes img proportionally to fit within maxCols terminal columns and
+// maxRows terminal rows, whichever constraint is more restrictive, preserving
+// aspect ratio. Each column is 2 source pixels wide; each row is 4 source
+// pixels tall. When both maxCols and maxRows are 0, both are auto-detected
+// from os.Stdout; if that fails img is returned unchanged. A zero value for
+// only one dimension leaves that dimension unconstrained.
+func Scale(img image.Image, maxCols, maxRows int) image.Image {
+	if maxCols == 0 && maxRows == 0 {
+		maxCols, maxRows = writerTermSize(os.Stdout)
+		if maxCols == 0 && maxRows == 0 {
 			return img
 		}
 	}
 
 	bounds := img.Bounds()
 	imgW, imgH := bounds.Dx(), bounds.Dy()
-	maxPixW := maxCols * 2 // each column = 2 source pixels
 
-	if imgW <= maxPixW {
+	maxPixW := 0
+	if maxCols > 0 {
+		maxPixW = maxCols * 2
+	}
+	if maxRows > 0 && imgH > 0 {
+		// convert height constraint to an equivalent pixel-width limit
+		maxPixWFromH := maxRows * 4 * imgW / imgH
+		if maxPixW == 0 || maxPixWFromH < maxPixW {
+			maxPixW = maxPixWFromH
+		}
+	}
+
+	if maxPixW == 0 || imgW <= maxPixW {
 		return img
 	}
 

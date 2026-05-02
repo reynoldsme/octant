@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"image"
 	"io"
@@ -68,12 +69,33 @@ func (f *octantFrontend) dbg(format string, args ...any) {
 }
 
 func (f *octantFrontend) SetTitle(title string) {
-	fmt.Fprintf(os.Stdout, "\x1b]0;%s\x07", title)
+	fmt.Fprintf(f.Terminal.W, "\x1b]0;%s\x07", title)
 }
 
 func (f *octantFrontend) DrawFrame(frame *image.RGBA) {
 	f.music.poll()
-	f.Terminal.DrawFrame(frame)
+
+	cols, rows := f.Terminal.TermConstraints()
+	scaled := octant.Scale(frame, cols, rows)
+
+	scaledCols := (scaled.Bounds().Dx() + 1) / 2
+	leftPad := 0
+	if cols > 0 && scaledCols < cols {
+		leftPad = (cols - scaledCols) / 2
+	}
+
+	var buf bytes.Buffer
+	octant.Render(scaled, &buf)
+	out := bytes.ReplaceAll(buf.Bytes(), []byte("\n"), []byte("\r\n"))
+	out = bytes.TrimSuffix(out, []byte("\r\n"))
+	if leftPad > 0 {
+		pad := bytes.Repeat([]byte(" "), leftPad)
+		sep := append([]byte("\r\n"), pad...)
+		lines := bytes.Split(out, []byte("\r\n"))
+		out = append(pad, bytes.Join(lines, sep)...)
+	}
+	fmt.Fprint(f.Terminal.W, "\x1b[H")
+	f.Terminal.W.Write(out)
 }
 
 // GetEvent polls for the next keyboard event.
@@ -449,6 +471,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Open the controlling terminal directly so rendering is unaffected when
+	// stdout/stderr are redirected to the log below.
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		tty = os.Stdout // best-effort fallback
+	}
+
 	// Switch stdin to raw mode so individual keystrokes arrive immediately
 	// without line-buffering or echo.
 	fd := int(os.Stdin.Fd())
@@ -459,16 +488,26 @@ func main() {
 	}
 	defer term.Restore(fd, oldState)
 
-	// Clear screen and hide cursor; restore on exit.
-	fmt.Print("\x1b[2J\x1b[H\x1b[?25l")
-	defer fmt.Print("\x1b[0m\x1b[?25h")
+	// Enter alternate screen, clear it, hide cursor; restore on exit.
+	fmt.Fprint(tty, "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
+	defer fmt.Fprint(tty, "\x1b[0m\x1b[?25h\x1b[?1049l")
 
 	// Detect and enable Kitty keyboard protocol before starting the reader
 	// goroutine (both use the same bufio.Reader; only one goroutine may read).
 	br := bufio.NewReader(os.Stdin)
 	kittyEnabled := tryEnableKitty(br)
 	if kittyEnabled {
-		defer fmt.Fprint(os.Stdout, "\x1b[<1u")
+		defer fmt.Fprint(tty, "\x1b[<1u")
+	}
+
+	// Redirect fds 1 and 2 to a log file so that DOOM's diagnostics and C
+	// library noise (ALSA, JACK) don't bleed through behind the rendered
+	// frames. Dup2 is necessary because C libraries write directly to the raw
+	// fds, bypassing Go's os.Stdout/os.Stderr variables.
+	if lf, err := os.Create("/tmp/octantgore.log"); err == nil {
+		syscall.Dup2(int(lf.Fd()), 1)
+		syscall.Dup2(int(lf.Fd()), 2)
+		defer lf.Close()
 	}
 
 	otoCtx := newAudioContext()
@@ -488,11 +527,11 @@ func main() {
 		}
 	}
 	if debugKeysMode {
-		debugLog = rawWriter{os.Stdout}
+		debugLog = rawWriter{tty}
 	}
 
 	f := &octantFrontend{
-		Terminal:        octant.Terminal{W: os.Stdout},
+		Terminal:        octant.Terminal{W: tty},
 		soundSystem:     sound,
 		music:           music,
 		keys:            keyReader(br),

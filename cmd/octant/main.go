@@ -33,6 +33,7 @@ import (
 func main() {
 	mono := flag.Bool("mono", false, "monochrome output")
 	cols := flag.Int("cols", 0, "output width in terminal columns (0 = auto)")
+	rows := flag.Int("rows", 0, "output height in terminal rows (0 = auto)")
 	flag.Parse()
 
 	files := flag.Args()
@@ -41,14 +42,14 @@ func main() {
 	}
 
 	for _, path := range files {
-		if err := render(path, *cols, *mono); err != nil {
+		if err := render(path, *cols, *rows, *mono); err != nil {
 			fmt.Fprintf(os.Stderr, "octant: %s: %v\n", path, err)
 			os.Exit(1)
 		}
 	}
 }
 
-func render(path string, cols int, mono bool) error {
+func render(path string, cols, rows int, mono bool) error {
 	var r io.Reader
 	if path == "-" {
 		r = bufio.NewReader(os.Stdin)
@@ -68,14 +69,14 @@ func render(path string, cols int, mono bool) error {
 
 	isGIF := len(data) >= 6 && (string(data[:6]) == "GIF89a" || string(data[:6]) == "GIF87a")
 	if isGIF {
-		return renderGIF(data, cols, mono)
+		return renderGIF(data, cols, rows, mono)
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	scaled := octant.Scale(img, cols)
+	scaled := octant.Scale(img, cols, rows)
 	if mono {
 		octant.RenderMono(scaled, os.Stdout)
 	} else {
@@ -84,7 +85,7 @@ func render(path string, cols int, mono bool) error {
 	return nil
 }
 
-func renderGIF(data []byte, cols int, mono bool) error {
+func renderGIF(data []byte, cols, rows int, mono bool) error {
 	g, err := gif.DecodeAll(bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -96,7 +97,7 @@ func renderGIF(data []byte, cols int, mono bool) error {
 
 	for {
 		for i, frame := range frames {
-			scaled := octant.Scale(frame, cols)
+			scaled := octant.Scale(frame, cols, rows)
 			fmt.Print("\033[H")
 			if mono {
 				octant.RenderMono(scaled, os.Stdout)
