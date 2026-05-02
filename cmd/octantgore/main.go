@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"fmt"
 	"image"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -57,7 +58,7 @@ type octantFrontend struct {
 	keys            <-chan byte
 	kittyEnabled    bool
 	outstandingDown map[uint8]time.Time
-	debugLog        *os.File // non-nil when OCTANT_DEBUG_KEYS is set
+	debugLog        io.Writer // non-nil when OCTANT_DEBUG_KEYS is set or -debugkeys is used
 }
 
 func (f *octantFrontend) dbg(format string, args ...any) {
@@ -77,25 +78,27 @@ func (f *octantFrontend) DrawFrame(frame *image.RGBA) {
 
 // GetEvent polls for the next keyboard event.
 //
-// In Kitty mode, CSI-reported keys carry real key-up events; outstandingDown
-// acts only as a safety-net fallback with a generous timeout so it doesn't
-// fire prematurely during the terminal's initial key-repeat delay (~200 ms).
+// In Kitty mode, real key-up events are delivered by the terminal; synth-up
+// is disabled entirely. Terminals only auto-repeat the most recently pressed
+// key, so a synth-up timeout would incorrectly drop still-held keys whenever
+// a second key is pressed alongside them.
 // In legacy mode every key uses the synthesised-up fallback with a tight timeout.
 func (f *octantFrontend) GetEvent(ev *gore.DoomEvent) bool {
-	upDelay := 60 * time.Millisecond
-	if f.kittyEnabled {
-		upDelay = 1 * time.Second
-	}
 	now := time.Now()
 
-	// Emit any pending synthesised key-ups whose delay has elapsed.
-	for k, ts := range f.outstandingDown {
-		if now.Sub(ts) >= upDelay {
-			delete(f.outstandingDown, k)
-			ev.Type = gore.Ev_keyup
-			ev.Key = k
-			f.dbg("synth-up key=0x%02x %q (held %v)", k, k, now.Sub(ts).Round(time.Millisecond))
-			return true
+	// Synthesised key-up: legacy mode only. Kitty sends real key-up events, so
+	// synth-up must be disabled there — terminals stop auto-repeating the first
+	// key when a second key is pressed, which would cause synth-up to fire and
+	// drop the still-held first key after 1 second.
+	if !f.kittyEnabled {
+		for k, ts := range f.outstandingDown {
+			if now.Sub(ts) >= 60*time.Millisecond {
+				delete(f.outstandingDown, k)
+				ev.Type = gore.Ev_keyup
+				ev.Key = k
+				f.dbg("synth-up key=0x%02x %q (held %v)", k, k, now.Sub(ts).Round(time.Millisecond))
+				return true
+			}
 		}
 	}
 
@@ -210,9 +213,18 @@ func drainCSI(ch <-chan byte) (params []byte, final byte, ok bool) {
 func parseKittyCSI(params []byte, final byte, ev *gore.DoomEvent) bool {
 	parts := strings.Split(string(params), ";")
 
-	// Third field (index 2) carries the event type; default is press.
+	// Modern Kitty encodes event type in the second field as "mods:event_type"
+	// (e.g. "1:3" → mods=1, event_type=3). Older CSI-u format used a separate
+	// third field ("code;mods;event_type"); support both as a fallback.
 	eventType := kittyPress
-	if len(parts) >= 3 {
+	if len(parts) >= 2 {
+		if sub := strings.SplitN(parts[1], ":", 2); len(sub) == 2 {
+			if n, err := strconv.Atoi(sub[1]); err == nil {
+				eventType = n
+			}
+		}
+	}
+	if eventType == kittyPress && len(parts) >= 3 {
 		if n, err := strconv.Atoi(parts[2]); err == nil {
 			eventType = n
 		}
@@ -223,10 +235,12 @@ func parseKittyCSI(params []byte, final byte, ev *gore.DoomEvent) bool {
 	var mapped bool
 
 	switch final {
-	case 'u': // CSI u — Kitty format: code ; mods ; event_type u
+	case 'u': // CSI u — Kitty format: code ; mods:event_type u
 		code := 0
 		if len(parts) >= 1 {
-			if n, err := strconv.Atoi(parts[0]); err == nil {
+			// First field may include alternate codepoints as "code:alt1:alt2";
+			// take only the primary codepoint.
+			if n, err := strconv.Atoi(strings.SplitN(parts[0], ":", 2)[0]); err == nil {
 				code = n
 			}
 		}
@@ -422,8 +436,9 @@ func tryEnableKitty(br *bufio.Reader) bool {
 }
 
 func main() {
-	// Strip -soundfont from args manually so gore receives its flags intact.
-	soundfont, args := extractFlag(os.Args[1:], "soundfont")
+	// Strip our own flags before gore sees them.
+	debugKeysMode, args := extractBoolFlag(os.Args[1:], "debugkeys")
+	soundfont, args := extractFlag(args, "soundfont")
 
 	// Validate arguments before touching the terminal: gore.Run does not
 	// return an error, so any WAD problem produces garbled output inside the
@@ -462,15 +477,18 @@ func main() {
 	music := newMusicSystem(otoCtx, soundfont)
 	defer music.close()
 
-	var debugLog *os.File
+	var debugLog io.Writer
 	if path := os.Getenv("OCTANT_DEBUG_KEYS"); path != "" {
 		if path == "1" {
 			path = "/tmp/octantgore-keys.log"
 		}
-		debugLog, _ = os.Create(path)
-		if debugLog != nil {
-			defer debugLog.Close()
+		if lf, err := os.Create(path); err == nil {
+			debugLog = lf
+			defer lf.Close()
 		}
+	}
+	if debugKeysMode {
+		debugLog = rawWriter{os.Stdout}
 	}
 
 	f := &octantFrontend{
@@ -481,6 +499,10 @@ func main() {
 		kittyEnabled:    kittyEnabled,
 		outstandingDown: make(map[uint8]time.Time),
 		debugLog:        debugLog,
+	}
+	if debugKeysMode {
+		runDebugKeys(f)
+		return
 	}
 	gore.Run(f, args)
 }
@@ -510,6 +532,78 @@ func extractFlag(args []string, name string) (value string, remaining []string) 
 		remaining = append(remaining, a)
 	}
 	return value, remaining
+}
+
+// rawWriter wraps an io.Writer and converts bare \n to \r\n for raw terminal mode.
+type rawWriter struct{ w io.Writer }
+
+func (r rawWriter) Write(p []byte) (int, error) {
+	_, err := r.w.Write([]byte(strings.ReplaceAll(string(p), "\n", "\r\n")))
+	return len(p), err
+}
+
+// extractBoolFlag removes -name / --name from args and returns whether it was
+// present along with the remaining slice.
+func extractBoolFlag(args []string, name string) (bool, []string) {
+	found := false
+	var remaining []string
+	for _, a := range args {
+		if a == "-"+name || a == "--"+name {
+			found = true
+			continue
+		}
+		remaining = append(remaining, a)
+	}
+	return found, remaining
+}
+
+// runDebugKeys replaces gore.Run with an interactive key-event log, using the
+// same octantFrontend (and therefore the same kitty detection, byte parsing,
+// and synthesised-up logic) as the real game.
+func runDebugKeys(f *octantFrontend) {
+	pr := func(format string, args ...any) {
+		fmt.Printf(format+"\r\n", args...)
+	}
+	pr("octantgore -debugkeys — live keyboard event log")
+	pr("────────────────────────────────────────────────")
+	if f.kittyEnabled {
+		pr("Kitty keyboard protocol: ENABLED")
+	} else {
+		pr("Kitty keyboard protocol: NOT DETECTED  (running in legacy mode)")
+	}
+	pr("(dbg lines below show raw bytes; key lines show parsed DoomEvents)")
+	pr("Press keys to test. ESC twice or q to quit.")
+	pr("")
+
+	escPresses := 0
+	for {
+		var ev gore.DoomEvent
+		for !f.GetEvent(&ev) {
+			time.Sleep(1 * time.Millisecond)
+		}
+
+		evLabel := "key-DOWN"
+		if ev.Type == gore.Ev_keyup {
+			evLabel = "key-UP  "
+		}
+		pr("%s  0x%02x  %q", evLabel, ev.Key, rune(ev.Key))
+
+		if ev.Type == gore.Ev_keydown {
+			switch ev.Key {
+			case gore.KEY_ESCAPE:
+				escPresses++
+				if escPresses >= 2 {
+					pr("quit.")
+					return
+				}
+			case 'q':
+				pr("quit.")
+				return
+			default:
+				escPresses = 0
+			}
+		}
+	}
 }
 
 // checkWAD verifies that a -iwad argument is present and the file exists.
