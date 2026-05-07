@@ -177,11 +177,11 @@ Keyboard controls:
 
 ### System requirement
 
-PortAudio is required for live audio capture:
+PortAudio is required for live audio capture. Install the development package (which includes the pkg-config file needed to build):
 
 ```shell
 # Debian / Ubuntu
-sudo apt install libportaudio2
+sudo apt install portaudio19-dev
 ```
 
 ### Install
