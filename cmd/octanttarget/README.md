@@ -1,4 +1,4 @@
-# target
+# octanttarget
 
 Displays an image in the terminal using [octant](https://github.com/reynoldsme/octant) block-character graphics. The image can be repositioned and scaled interactively via keyboard or a JSON HTTP API.
 

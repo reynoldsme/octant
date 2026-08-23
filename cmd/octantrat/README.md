@@ -1,4 +1,4 @@
-# rat
+# octantrat
 
 Renders a rotating 3D rat in the terminal using [octant](https://github.com/reynoldsme/octant) block-character graphics.
 
