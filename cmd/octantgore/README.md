@@ -2,6 +2,15 @@
 
 Runs DOOM in the terminal using [octant](https://github.com/reynoldsme/octant) block-character graphics. Requires a DOOM WAD file (e.g. `doom.wad` from a retail or [freedoom release](https://github.com/freedoom/freedoom/releases)).
 
+## System requirements
+
+ALSA development headers are required for audio (used by the `ebitengine/oto` audio library):
+
+```shell
+# Debian / Ubuntu
+sudo apt install libasound2-dev
+```
+
 ## Install
 
 ```shell

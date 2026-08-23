@@ -2,7 +2,7 @@
 
 A terminal oscilloscope heavily modeled on [dood.al/oscilloscope](https://dood.al/oscilloscope/). Renders a real-time XY phosphor display — complete with Gaussian beam glow, phosphor persistence, and a CRT graticule — using [octant](https://github.com/reynoldsme/octant) block-character graphics. A `--sixel` flag for terminals that support it.
 
-## System requirement
+## System requirements
 
 PortAudio is required for live audio capture. Install the development package (which includes the pkg-config file needed to build):
 
