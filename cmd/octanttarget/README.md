@@ -30,6 +30,8 @@ Position is expressed as a percentage of the canvas (0–100 on each axis). Scal
 
 All requests and responses use JSON. The server listens on `localhost:<port>`.
 
+Example: `curl 192.168.11.62:8077/move --request POST --data '{"x":0,"y":0}'`
+
 ### `POST /move`
 
 Reposition the image. Supply absolute coordinates, a relative delta, or both.

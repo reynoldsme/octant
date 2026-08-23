@@ -6,25 +6,14 @@ with ANSI 24-bit truecolor.
 
 Each terminal cell is treated as a **2-column x 4-row pixel grid**. The 256 possible fill patterns map to Unicode block characters — the 230 octant characters in `U+1CD00`–`U+1CDE5` plus legacy block-drawing characters for the patterns they already cover. This gives twice the horizontal and four times the vertical resolution of plain half-block rendering, at the cost of each cell being limited to two colors.
 
-![image](images/example-tsunami.jpg)
+## Prerequisites
 
-Yes, you can [run doom](#octantgore--doom-in-the-terminal)!
-![image](images/example-octantgore.jpg)
-
-Maybe visualize some audio in style with [terminal oscilloscope](#octantscope--oscilloscope-in-the-terminal).
-![image](images/example-octantscope.jpg)
-
-
----
-
-## Unicode 16.0 Font Requirement
+### Unicode 16.0 (or greater) Font
 
 Your terminal must use a font that includes the Unicode 16.0 octant characters. These are new enough (circa ~2024) your system may not ship with them. 
 [Cascadia Code](https://github.com/microsoft/cascadia-code/releases) includes these. You may use a tool like [getnf](https://github.com/getnf/getnf) to download and install the font, or or install the `.ttf` from the latest GitHub release. Most recently updated Nerd Fonts appear to now include these. Some terminals seem to automatically fall back on other installed fonts for missing glyphs, but when in doubt, select that font directly.
 
----
-
-## CLI
+## Example Applications
 
 ### octant — image and GIF viewer
 
@@ -34,6 +23,8 @@ Renders images and GIF animations in the terminal. See [cmd/octant/README.md](cm
 go install github.com/reynoldsme/octant/cmd/octant@latest
 ```
 
+![image](images/example-tsunami.jpg)
+
 ### octantgore — DOOM in the terminal
 
 Runs DOOM in the terminal. Requires a DOOM WAD file. See [cmd/octantgore/README.md](cmd/octantgore/README.md) for full usage and keyboard controls.
@@ -41,6 +32,8 @@ Runs DOOM in the terminal. Requires a DOOM WAD file. See [cmd/octantgore/README.
 ```shell
 go install github.com/reynoldsme/octant/cmd/octantgore@latest
 ```
+
+![image](images/example-octantgore.jpg)
 
 ### octantscope — oscilloscope in the terminal
 
@@ -50,7 +43,11 @@ A real-time XY phosphor oscilloscope with Gaussian beam glow, phosphor persisten
 go install github.com/reynoldsme/octant/cmd/octantscope@latest
 ```
 
+![image](images/example-octantscope.jpg)
+
 ### octantrat — rotating 3D rat
+
+![image](images/example-octantrat.jpg)
 
 Renders a rotating 3D rat with a UV-mapped texture. See [cmd/octantrat/README.md](cmd/octantrat/README.md) for full usage and keyboard controls.
 
@@ -60,6 +57,8 @@ go install github.com/reynoldsme/octant/cmd/octantrat@latest
 
 ### octanttarget — interactive image display
 
+![image](images/example-octanttarget.jpg)
+
 Displays an image that can be repositioned and scaled interactively via keyboard or a JSON HTTP API. See [cmd/octanttarget/README.md](cmd/octanttarget/README.md) for full usage, flags, and API reference.
 
 ```shell
@@ -68,7 +67,9 @@ go install github.com/reynoldsme/octant/cmd/octanttarget@latest
 
 ---
 
-## Library
+## As a Library
+
+Note: Currently this is a silly vibe coded experiment. Don't expect API stability. I wouldn't recommend actually using this for anything you expect to depend on.
 
 Import the root package:
 
@@ -141,27 +142,6 @@ type Terminal struct {
 // DrawFrame renders img, overwriting the previous frame in place.
 func (t *Terminal) DrawFrame(img *image.RGBA)
 ```
-
----
-
-## How it works
-
-1. **Scale** — the source image is box-filter downsampled to fit the terminal width
-   (each terminal column = 2 source pixels).
-
-2. **Quantize** — each 2×4 pixel block is reduced to two colors using a single
-   k-means pass seeded from the most perceptually-distant pixel pair.
-
-3. **Palette normalization** — the lighter color is always used as background and
-   the darker as foreground, ensuring canonical characters (e.g. `▌` instead of `▐`
-   with a dark background) that render consistently across fonts.
-
-4. **Dithering** — inter-block Floyd-Steinberg error diffusion propagates color
-   error to neighboring blocks for smoother gradients. Disabled automatically for
-   near-bilevel images to avoid amplifying JPEG artifacts.
-
-5. **Lookup** — the 8-bit block classification index maps directly into a prebuilt
-   table of Unicode octant characters, constructed once at `init` time.
 
 ---
 
