@@ -20,6 +20,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -39,6 +41,9 @@ import (
 	"github.com/reynoldsme/octant"
 	"golang.org/x/term"
 )
+
+//go:embed target.png
+var embeddedImg []byte
 
 // state holds the mutable display parameters, protected by a mutex.
 // All fields must be accessed with mu held.
@@ -358,20 +363,33 @@ func startHTTPServer(st *state, port int) {
 }
 
 func main() {
-	imageFile := flag.String("image", "target.png", "image file to display")
+	imageFile := flag.String("image", "", "image file to display (defaults to embedded target.png)")
 	port := flag.Int("port", 8077, "HTTP API port")
 	step := flag.Float64("step", 5, "keyboard movement step (percentage points)")
 	scaleStep := flag.Float64("scale-step", 0.1, "keyboard scale step")
 	flag.Parse()
 
-	img, err := loadImage(*imageFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "target: %v\n", err)
-		os.Exit(1)
+	var img image.Image
+	var imgName string
+	var err error
+	if *imageFile != "" {
+		img, err = loadImage(*imageFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "target: %v\n", err)
+			os.Exit(1)
+		}
+		imgName = *imageFile
+	} else {
+		img, _, err = image.Decode(bytes.NewReader(embeddedImg))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "target: decode embedded image: %v\n", err)
+			os.Exit(1)
+		}
+		imgName = "target.png"
 	}
 
 	d := stateData{
-		imageFile: *imageFile,
+		imageFile: imgName,
 		orig:      img,
 		x:         50,
 		y:         50,

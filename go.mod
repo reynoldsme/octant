@@ -11,4 +11,7 @@ require (
 	golang.org/x/term v0.42.0
 )
 
-require github.com/ebitengine/purego v0.10.0 // indirect
+require (
+	github.com/ebitengine/purego v0.10.0 // indirect
+	golang.org/x/image v0.40.0 // indirect
+)

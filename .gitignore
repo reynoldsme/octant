@@ -7,5 +7,8 @@
 !images/*.jpg
 !images/*.gif
 !images/*.png
+!cmd/octantrat/rat.jpg
+!cmd/octantrat/rat.obj
+!cmd/octanttarget/target.png
 .playwright-mcp/
 /octant
